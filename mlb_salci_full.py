@@ -715,32 +715,44 @@ def get_team_season_batting(team_id: int, season: int = 2025) -> Optional[Dict]:
 # ----------------------------
 @st.cache_data(ttl=300)
 def get_yesterday_box_scores(date_str: str) -> List[Dict]:
-    """Fetch box score data for all games on a given date."""
-    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date_str}&hydrate=boxscore,probablePitcher"
+    """Fetch box score data for all completed games on a given date."""
+    # First get the schedule to find game IDs
+    schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date_str}"
     try:
-        res = requests.get(url, timeout=15)
+        res = requests.get(schedule_url, timeout=15)
         data = res.json()
         if not data.get("dates"):
             return []
         
         results = []
-        for game in data["dates"][0].get("games", []):
+        games = data["dates"][0].get("games", [])
+        
+        for game in games:
             game_pk = game.get("gamePk")
             status = game.get("status", {}).get("abstractGameState", "")
             
+            # Only process completed games
             if status != "Final":
                 continue
             
-            boxscore = game.get("boxscore", {})
-            teams = boxscore.get("teams", {})
-            
-            for side in ["home", "away"]:
-                team_data = teams.get(side, {})
-                team_name = game.get("teams", {}).get(side, {}).get("team", {}).get("name", "")
+            # Fetch detailed boxscore for this game
+            box_url = f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
+            try:
+                box_res = requests.get(box_url, timeout=15)
+                box_data = box_res.json()
                 
-                # Get starting pitcher stats
-                pitchers = team_data.get("pitchers", [])
-                if pitchers:
+                teams = box_data.get("teams", {})
+                
+                for side in ["home", "away"]:
+                    team_data = teams.get(side, {})
+                    team_info = team_data.get("team", {})
+                    team_name = team_info.get("name", "Unknown")
+                    
+                    # Get starting pitcher (first in pitchers list)
+                    pitchers = team_data.get("pitchers", [])
+                    if not pitchers:
+                        continue
+                    
                     starter_id = pitchers[0]
                     players = team_data.get("players", {})
                     starter_key = f"ID{starter_id}"
@@ -768,11 +780,15 @@ def get_yesterday_box_scores(date_str: str) -> List[Dict]:
                             "actual_bb": int(stats.get("baseOnBalls", 0)),
                             "actual_h": int(stats.get("hits", 0)),
                             "actual_er": int(stats.get("earnedRuns", 0)),
+                            "pitches": int(stats.get("numberOfPitches", 0)),
                         })
+            except Exception as e:
+                # Skip this game if boxscore fetch fails
+                continue
         
         return results
     except Exception as e:
-        st.error(f"Error fetching box scores: {e}")
+        st.error(f"Error fetching schedule: {e}")
         return []
 
 
@@ -1775,6 +1791,7 @@ def render_hitter_card(hitter: Dict, show_batting_order: bool = True):
     score = hitter.get("score", 50)
     rating, css = get_hitter_rating(score)
     recent = hitter.get("recent", {})
+    season = hitter.get("season", {})
     
     matchup_grade, matchup_css = get_matchup_grade(
         recent.get("k_rate", 0.22),
@@ -1783,14 +1800,23 @@ def render_hitter_card(hitter: Dict, show_batting_order: bool = True):
         hitter.get("pitcher_hand", "R")
     )
     
-    col1, col2, col3, col4 = st.columns([2.5, 1, 1, 1])
+    # Get season AB count
+    season_ab = season.get("ab", 0)
+    bat_hand = hitter.get("bat_side", "R")
+    
+    col1, col2, col3, col4, col5 = st.columns([2.5, 1.2, 1.2, 1.2, 1])
     
     with col1:
         order_badge = ""
         if show_batting_order and hitter.get("batting_order"):
             order_badge = f"<span class='batting-order'>#{hitter['batting_order']}</span> "
         
+        # Name with position
         st.markdown(f"{order_badge}**{hitter['name']}** ({hitter.get('position', '')})", 
+                   unsafe_allow_html=True)
+        
+        # Hand and AB count on second line
+        st.markdown(f"<span style='font-size: 0.8rem; color: #666;'>{bat_hand}HB • {season_ab} AB</span>", 
                    unsafe_allow_html=True)
         
         if recent.get("hit_streak", 0) >= 3:
@@ -1801,15 +1827,46 @@ def render_hitter_card(hitter: Dict, show_batting_order: bool = True):
                        unsafe_allow_html=True)
     
     with col2:
-        if recent:
-            st.metric("AVG (L7)", f"{recent.get('avg', 0):.3f}")
+        # AVG: Season and L7
+        season_avg = season.get("avg", 0)
+        recent_avg = recent.get("avg", 0)
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <div style='font-size: 0.7rem; color: #666;'>AVG</div>
+            <div style='font-size: 1rem; font-weight: bold;'>{recent_avg:.3f}</div>
+            <div style='font-size: 0.7rem; color: #888;'>L7</div>
+            <div style='font-size: 0.85rem; color: #666;'>{season_avg:.3f}</div>
+            <div style='font-size: 0.65rem; color: #aaa;'>Season</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        if recent:
-            st.metric("OPS (L7)", f"{recent.get('ops', 0):.3f}")
+        # OPS: Season and L7
+        season_ops = season.get("ops", 0)
+        recent_ops = recent.get("ops", 0)
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <div style='font-size: 0.7rem; color: #666;'>OPS</div>
+            <div style='font-size: 1rem; font-weight: bold;'>{recent_ops:.3f}</div>
+            <div style='font-size: 0.7rem; color: #888;'>L7</div>
+            <div style='font-size: 0.85rem; color: #666;'>{season_ops:.3f}</div>
+            <div style='font-size: 0.65rem; color: #aaa;'>Season</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col4:
-        st.markdown(f"<div class='{matchup_css}' style='padding: 0.5rem; border-radius: 5px; text-align: center;'>"
+        # K%: L7 only (most relevant for K prediction)
+        recent_krate = recent.get("k_rate", 0) * 100
+        krate_color = "#10b981" if recent_krate < 20 else "#eab308" if recent_krate < 28 else "#ef4444"
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <div style='font-size: 0.7rem; color: #666;'>K% (L7)</div>
+            <div style='font-size: 1rem; font-weight: bold; color: {krate_color};'>{recent_krate:.1f}%</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col5:
+        st.markdown(f"<div class='{matchup_css}' style='padding: 0.5rem; border-radius: 5px; text-align: center; font-size: 0.8rem;'>"
                    f"{matchup_grade}</div>", unsafe_allow_html=True)
 
 
@@ -2011,6 +2068,7 @@ def main():
                     
                     for player in lineup:
                         h_recent = get_hitter_recent_stats(player["id"], 7)
+                        h_season = get_hitter_season_stats(player["id"], 2025)
                         if h_recent:
                             h_score = compute_hitter_score(h_recent)
                             if not hot_hitters_only or h_score >= 60:
@@ -2026,6 +2084,7 @@ def main():
                                     "pitcher_k_pct": (p_baseline or p_recent or {}).get("K_percent", 0.22),
                                     "game_pk": game_pk,
                                     "recent": h_recent,
+                                    "season": h_season or {},  # Add season stats
                                     "score": h_score,
                                     "lineup_confirmed": opp_lineup_info["confirmed"]
                                 })
@@ -2114,16 +2173,17 @@ def main():
                     "Order": f"#{h['batting_order']}" if h.get('batting_order') else "-",
                     "Player": h["name"],
                     "Bats": h.get("bat_side", "R"),
+                    "AB": h.get("season", {}).get("ab", 0),
                     "Team": h["team"],
                     "Pos": h["position"],
                     "vs Pitcher": h["vs_pitcher"],
                     "P Hand": h.get("pitcher_hand", "R"),
-                    "Score": round(h["score"], 1),
+                    "AVG (Yr)": f"{h.get('season', {}).get('avg', 0):.3f}",
                     "AVG (L7)": f"{h['recent'].get('avg', 0):.3f}",
+                    "OPS (Yr)": f"{h.get('season', {}).get('ops', 0):.3f}",
                     "OPS (L7)": f"{h['recent'].get('ops', 0):.3f}",
                     "K% (L7)": f"{h['recent'].get('k_rate', 0)*100:.1f}%",
-                    "HR (L7)": h["recent"].get("hr", 0),
-                    "Hit Streak": h["recent"].get("hit_streak", 0),
+                    "Streak": h["recent"].get("hit_streak", 0) if h["recent"].get("hit_streak", 0) > 0 else -h["recent"].get("hitless_streak", 0),
                     "Confirmed": "✅" if h.get("lineup_confirmed") else "⏳"
                 } for h in all_hitter_results])
                 
@@ -2149,12 +2209,12 @@ def main():
                     lineup_badge = "✅" if p.get("lineup_confirmed") else "⏳"
                     p_hand = p.get("pitcher_hand", "R")
                     st.markdown(f"""
-                    <div style='background: #f0f9ff; padding: 1rem; border-radius: 10px; 
+                    <div style='background: #e0f2fe; padding: 1rem; border-radius: 10px; 
                                 margin-bottom: 0.5rem; border-left: 4px solid #3b82f6;'>
-                        <strong>#{i} {p['pitcher']} ({p_hand}HP)</strong> ({p['team']} vs {p['opponent']}) {lineup_badge}<br>
-                        <span style='font-size: 1.2rem;'>{emoji} SALCI: {p['salci']}</span><br>
-                        Expected: <strong>{p['expected']} Ks</strong><br>
-                        5+ @ {p['lines'][5]}% | 6+ @ {p['lines'][6]}% | 7+ @ {p['lines'][7]}%
+                        <span style='color: #1e3a5f;'><strong>#{i} {p['pitcher']} ({p_hand}HP)</strong> ({p['team']} vs {p['opponent']}) {lineup_badge}</span><br>
+                        <span style='font-size: 1.2rem; color: #1e3a5f;'>{emoji} SALCI: {p['salci']}</span><br>
+                        <span style='color: #1e3a5f;'>Expected: <strong>{p['expected']} Ks</strong></span><br>
+                        <span style='color: #1e3a5f;'>5+ @ {p['lines'][5]}% | 6+ @ {p['lines'][6]}% | 7+ @ {p['lines'][7]}%</span>
                     </div>
                     """, unsafe_allow_html=True)
         
@@ -2174,10 +2234,10 @@ def main():
                     st.markdown(f"""
                     <div style='background: #fef3c7; padding: 1rem; border-radius: 10px;
                                 margin-bottom: 0.5rem; border-left: 4px solid #f59e0b;'>
-                        <strong>#{i} {h['name']} ({h_hand}HB)</strong> ({h['team']}) - Batting #{h.get('batting_order', '?')}<br>
-                        vs {h['vs_pitcher']} ({p_hand}HP) | {matchup}<br>
-                        L7: <strong>{r.get('avg', 0):.3f} AVG</strong> / {r.get('ops', 0):.3f} OPS<br>
-                        {f"🔥 {r.get('hit_streak', 0)}-game hit streak" if r.get('hit_streak', 0) >= 3 else ""}
+                        <span style='color: #78350f;'><strong>#{i} {h['name']} ({h_hand}HB)</strong> ({h['team']}) - Batting #{h.get('batting_order', '?')}</span><br>
+                        <span style='color: #78350f;'>vs {h['vs_pitcher']} ({p_hand}HP) | {matchup}</span><br>
+                        <span style='color: #78350f;'>L7: <strong>{r.get('avg', 0):.3f} AVG</strong> / {r.get('ops', 0):.3f} OPS</span><br>
+                        <span style='color: #78350f;'>{f"🔥 {r.get('hit_streak', 0)}-game hit streak" if r.get('hit_streak', 0) >= 3 else ""}</span>
                     </div>
                     """, unsafe_allow_html=True)
         
