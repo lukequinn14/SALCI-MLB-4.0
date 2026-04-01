@@ -117,9 +117,9 @@ st.markdown("""
         text-align: center;
         border: 1px solid #e9ecef;
     }
-    .matchup-good { background-color: #d4edda; }
-    .matchup-neutral { background-color: #fff3cd; }
-    .matchup-bad { background-color: #f8d7da; }
+    .matchup-good { background-color: #d4edda; color: #155724; font-weight: bold; }
+    .matchup-neutral { background-color: #fff3cd; color: #856404; font-weight: bold; }
+    .matchup-bad { background-color: #f8d7da; color: #721c24; font-weight: bold; }
     
     .chart-container {
         background: white;
@@ -792,6 +792,84 @@ def get_yesterday_box_scores(date_str: str) -> List[Dict]:
         return []
 
 
+def get_yesterday_hitter_leaders(date_str: str, min_hits: int = 2) -> List[Dict]:
+    """Fetch top hitter performances from completed games on a given date."""
+    schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date_str}"
+    try:
+        res = requests.get(schedule_url, timeout=15)
+        data = res.json()
+        if not data.get("dates"):
+            return []
+        
+        hitters = []
+        games = data["dates"][0].get("games", [])
+        
+        for game in games:
+            game_pk = game.get("gamePk")
+            status = game.get("status", {}).get("abstractGameState", "")
+            
+            if status != "Final":
+                continue
+            
+            box_url = f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
+            try:
+                box_res = requests.get(box_url, timeout=15)
+                box_data = box_res.json()
+                
+                teams = box_data.get("teams", {})
+                
+                for side in ["home", "away"]:
+                    team_data = teams.get(side, {})
+                    team_info = team_data.get("team", {})
+                    team_name = team_info.get("name", "Unknown")
+                    
+                    batters = team_data.get("batters", [])
+                    players = team_data.get("players", {})
+                    
+                    for batter_id in batters:
+                        player_key = f"ID{batter_id}"
+                        player_data = players.get(player_key, {})
+                        
+                        stats = player_data.get("stats", {}).get("batting", {})
+                        person = player_data.get("person", {})
+                        position = player_data.get("position", {})
+                        
+                        if stats:
+                            hits = int(stats.get("hits", 0))
+                            ab = int(stats.get("atBats", 0))
+                            hr = int(stats.get("homeRuns", 0))
+                            rbi = int(stats.get("rbi", 0))
+                            bb = int(stats.get("baseOnBalls", 0))
+                            so = int(stats.get("strikeOuts", 0))
+                            
+                            # Only include players with notable performances
+                            if hits >= min_hits or hr >= 1:
+                                hitters.append({
+                                    "game_pk": game_pk,
+                                    "date": date_str,
+                                    "team": team_name,
+                                    "player_id": batter_id,
+                                    "player_name": person.get("fullName", "Unknown"),
+                                    "position": position.get("abbreviation", ""),
+                                    "hits": hits,
+                                    "ab": ab,
+                                    "hr": hr,
+                                    "rbi": rbi,
+                                    "bb": bb,
+                                    "so": so,
+                                    "avg_game": round(hits / ab, 3) if ab > 0 else 0,
+                                })
+            except:
+                continue
+        
+        # Sort by hits, then HR, then RBI
+        hitters.sort(key=lambda x: (x["hits"], x["hr"], x["rbi"]), reverse=True)
+        return hitters
+        
+    except Exception as e:
+        return []
+
+
 def calculate_reflection_metrics(predictions: List[Dict], actuals: List[Dict]) -> Dict:
     """Compare predictions to actual results and calculate accuracy metrics."""
     if not predictions or not actuals:
@@ -811,6 +889,8 @@ def calculate_reflection_metrics(predictions: List[Dict], actuals: List[Dict]) -
                 "predicted_k": pred.get("expected", 0),
                 "actual_k": actual.get("actual_k", 0),
                 "predicted_salci": pred.get("salci", 0),
+                "stuff_score": pred.get("stuff_score"),
+                "location_score": pred.get("location_score"),
                 "actual_ip": actual.get("actual_ip", 0),
                 "k_diff": actual.get("actual_k", 0) - pred.get("expected", 0),
             })
@@ -1525,11 +1605,15 @@ def create_game_day_card(
         h_name, h_hand, h_team, h_pos, h_avg, h_ops, h_krate, h_streak = "TBD", "R", "", "", 0, 0, 0, 0
         h_vs_pitcher, h_vs_hand = "", "R"
     
-    st.markdown(f"""
+    # Pre-compute the K rate color (can't have ternary in f-string curly braces)
+    h_krate_color = "#10b981" if h_krate < 20 else "#f59e0b"
+    
+    # Use st.html() for complex HTML instead of st.markdown with unsafe_allow_html
+    # This is more reliable for rendering complex HTML
+    html_content = f"""
     <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 520px; margin: 0 auto;">
       <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2e5a8f 100%); border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
         
-        <!-- Header -->
         <div style="padding: 20px 24px; border-bottom: 1px solid rgba(255,255,255,0.1);">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
@@ -1543,7 +1627,6 @@ def create_game_day_card(
           </div>
         </div>
         
-        <!-- Top Pitcher Section -->
         <div style="padding: 20px 24px; background: rgba(255,255,255,0.05);">
           <div style="font-size: 11px; color: #10b981; letter-spacing: 1px; margin-bottom: 12px; font-weight: 600;">🎯 TOP K PLAY</div>
           <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -1572,7 +1655,6 @@ def create_game_day_card(
           </div>
         </div>
         
-        <!-- Hot Hitter Section -->
         <div style="padding: 20px 24px; border-top: 1px solid rgba(255,255,255,0.1);">
           <div style="font-size: 11px; color: #f59e0b; letter-spacing: 1px; margin-bottom: 12px; font-weight: 600;">🔥 HOTTEST BAT</div>
           <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -1591,7 +1673,7 @@ def create_game_day_card(
               <div style="font-size: 10px; color: rgba(255,255,255,0.6);">OPS</div>
             </div>
             <div style="flex: 1; background: rgba(245,158,11,0.15); border-radius: 8px; padding: 10px; text-align: center;">
-              <div style="font-size: 16px; font-weight: 700; color: {'#10b981' if h_krate < 20 else '#f59e0b'};">{h_krate:.1f}%</div>
+              <div style="font-size: 16px; font-weight: 700; color: {h_krate_color};">{h_krate:.1f}%</div>
               <div style="font-size: 10px; color: rgba(255,255,255,0.6);">K%</div>
             </div>
             <div style="flex: 1; background: rgba(245,158,11,0.15); border-radius: 8px; padding: 10px; text-align: center;">
@@ -1601,7 +1683,6 @@ def create_game_day_card(
           </div>
         </div>
         
-        <!-- Quick Stats Row -->
         <div style="padding: 16px 24px; background: rgba(0,0,0,0.2); display: flex; justify-content: space-around;">
           <div style="text-align: center;">
             <div style="font-size: 24px; font-weight: 700; color: #10b981;">{elite_count}</div>
@@ -1621,7 +1702,6 @@ def create_game_day_card(
           </div>
         </div>
         
-        <!-- Footer -->
         <div style="padding: 12px 24px; background: rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center;">
           <div style="font-size: 11px; color: rgba(255,255,255,0.5);">Not financial advice • For entertainment only</div>
           <div style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.8);">#SALCI</div>
@@ -1629,7 +1709,18 @@ def create_game_day_card(
         
       </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    
+    # Try st.html first (available in newer Streamlit), fallback to markdown
+    try:
+        st.html(html_content)
+    except AttributeError:
+        # Fallback: use components.html which works in more versions
+        try:
+            import streamlit.components.v1 as components
+            components.html(html_content, height=550, scrolling=False)
+        except:
+            st.markdown(html_content, unsafe_allow_html=True)
 
 
 def create_daily_picks_card(top_pitcher: Dict, top_hitter: Dict) -> None:
@@ -1815,8 +1906,8 @@ def render_hitter_card(hitter: Dict, show_batting_order: bool = True):
         st.markdown(f"{order_badge}**{hitter['name']}** ({hitter.get('position', '')})", 
                    unsafe_allow_html=True)
         
-        # Hand and AB count on second line
-        st.markdown(f"<span style='font-size: 0.8rem; color: #666;'>{bat_hand}HB • {season_ab} AB</span>", 
+        # Hand and 2025 AB count on second line
+        st.markdown(f"<span style='font-size: 0.8rem; color: #555;'>{bat_hand}HB • {season_ab} AB (2025)</span>", 
                    unsafe_allow_html=True)
         
         if recent.get("hit_streak", 0) >= 3:
@@ -2444,25 +2535,65 @@ def main():
             st.markdown("---")
             st.markdown("#### 📊 Yesterday's Actual Results")
             
-            if yesterday_actuals:
-                df_actuals = pd.DataFrame([{
-                    "Pitcher": a["pitcher_name"],
-                    "Team": a["team"],
-                    "IP": a["actual_ip"],
-                    "K": a["actual_k"],
-                    "BB": a["actual_bb"],
-                    "H": a["actual_h"],
-                    "ER": a["actual_er"]
-                } for a in yesterday_actuals])
+            col_p, col_h = st.columns(2)
+            
+            with col_p:
+                st.markdown("##### ⚾ Pitcher Performance")
+                if yesterday_actuals:
+                    df_actuals = pd.DataFrame([{
+                        "Pitcher": a["pitcher_name"],
+                        "Team": a["team"],
+                        "IP": a["actual_ip"],
+                        "K": a["actual_k"],
+                        "BB": a["actual_bb"],
+                        "H": a["actual_h"],
+                        "ER": a["actual_er"]
+                    } for a in yesterday_actuals])
+                    
+                    df_actuals = df_actuals.sort_values("K", ascending=False)
+                    st.dataframe(df_actuals.head(15), use_container_width=True, hide_index=True)
+                    
+                    # Show top K performers
+                    top_k = sorted(yesterday_actuals, key=lambda x: x["actual_k"], reverse=True)[:5]
+                    st.markdown("**🔥 K Leaders**")
+                    for i, p in enumerate(top_k, 1):
+                        st.markdown(f"""
+                        <div style='background: #e8f5e9; padding: 0.5rem; border-radius: 6px; margin-bottom: 0.3rem; border-left: 3px solid #4caf50;'>
+                            <span style='color: #1b5e20;'><strong>{i}. {p['pitcher_name']}</strong> ({p['team']}) - <strong>{p['actual_k']} Ks</strong> in {p['actual_ip']} IP</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+            
+            with col_h:
+                st.markdown("##### 🏏 Hitter Performance")
+                # Fetch yesterday's hitter leaders
+                yesterday_hitters = get_yesterday_hitter_leaders(yesterday_str, min_hits=2)
                 
-                df_actuals = df_actuals.sort_values("K", ascending=False)
-                st.dataframe(df_actuals, use_container_width=True, hide_index=True)
-                
-                # Show top K performers
-                top_k = sorted(yesterday_actuals, key=lambda x: x["actual_k"], reverse=True)[:5]
-                st.markdown("#### 🔥 Yesterday's K Leaders")
-                for i, p in enumerate(top_k, 1):
-                    st.markdown(f"**{i}. {p['pitcher_name']}** ({p['team']}) - **{p['actual_k']} Ks** in {p['actual_ip']} IP")
+                if yesterday_hitters:
+                    df_hitters = pd.DataFrame([{
+                        "Player": h["player_name"],
+                        "Team": h["team"],
+                        "Pos": h["position"],
+                        "H": h["hits"],
+                        "AB": h["ab"],
+                        "HR": h["hr"],
+                        "RBI": h["rbi"],
+                        "SO": h["so"]
+                    } for h in yesterday_hitters[:15]])
+                    
+                    st.dataframe(df_hitters, use_container_width=True, hide_index=True)
+                    
+                    # Show top performers
+                    top_hitters = yesterday_hitters[:5]
+                    st.markdown("**🔥 Hit Leaders**")
+                    for i, h in enumerate(top_hitters, 1):
+                        hr_text = f" + {h['hr']} HR" if h['hr'] > 0 else ""
+                        st.markdown(f"""
+                        <div style='background: #fff3e0; padding: 0.5rem; border-radius: 6px; margin-bottom: 0.3rem; border-left: 3px solid #ff9800;'>
+                            <span style='color: #e65100;'><strong>{i}. {h['player_name']}</strong> ({h['team']}) - <strong>{h['hits']}-{h['ab']}</strong>{hr_text}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("No hitter data available")
         else:
             # We have both predictions and actuals - show reflection!
             reflection = calculate_reflection_metrics(yesterday_predictions, yesterday_actuals)
@@ -2475,18 +2606,18 @@ def main():
                     acc = reflection.get("accuracy_1k", 0)
                     color = "#10b981" if acc >= 70 else "#eab308" if acc >= 50 else "#ef4444"
                     st.markdown(f"""
-                    <div style='text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px;'>
+                    <div style='text-align: center; padding: 1rem; background: #f0f4f8; border-radius: 10px; border: 1px solid #e2e8f0;'>
                         <div style='font-size: 2rem; font-weight: bold; color: {color};'>{acc}%</div>
-                        <div style='font-size: 0.8rem; color: #666;'>Within ±1 K</div>
+                        <div style='font-size: 0.8rem; color: #4a5568;'>Within ±1 K</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
                 with col2:
                     matched = reflection.get("total_matched", 0)
                     st.markdown(f"""
-                    <div style='text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px;'>
-                        <div style='font-size: 2rem; font-weight: bold;'>{matched}</div>
-                        <div style='font-size: 0.8rem; color: #666;'>Pitchers Tracked</div>
+                    <div style='text-align: center; padding: 1rem; background: #f0f4f8; border-radius: 10px; border: 1px solid #e2e8f0;'>
+                        <div style='font-size: 2rem; font-weight: bold; color: #1a202c;'>{matched}</div>
+                        <div style='font-size: 0.8rem; color: #4a5568;'>Pitchers Tracked</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
@@ -2495,18 +2626,18 @@ def main():
                     diff_color = "#10b981" if abs(avg_diff) < 1 else "#eab308"
                     sign = "+" if avg_diff > 0 else ""
                     st.markdown(f"""
-                    <div style='text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px;'>
+                    <div style='text-align: center; padding: 1rem; background: #f0f4f8; border-radius: 10px; border: 1px solid #e2e8f0;'>
                         <div style='font-size: 2rem; font-weight: bold; color: {diff_color};'>{sign}{avg_diff}</div>
-                        <div style='font-size: 0.8rem; color: #666;'>Avg K Diff</div>
+                        <div style='font-size: 0.8rem; color: #4a5568;'>Avg K Diff</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
                 with col4:
                     avg_ip = reflection.get("avg_actual_ip", 0)
                     st.markdown(f"""
-                    <div style='text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px;'>
-                        <div style='font-size: 2rem; font-weight: bold;'>{avg_ip}</div>
-                        <div style='font-size: 0.8rem; color: #666;'>Avg IP</div>
+                    <div style='text-align: center; padding: 1rem; background: #f0f4f8; border-radius: 10px; border: 1px solid #e2e8f0;'>
+                        <div style='font-size: 2rem; font-weight: bold; color: #1a202c;'>{avg_ip}</div>
+                        <div style='font-size: 0.8rem; color: #4a5568;'>Avg IP</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
@@ -2522,9 +2653,9 @@ def main():
                         for m in overperformers[:5]:
                             diff = m["k_diff"]
                             st.markdown(f"""
-                            <div style='background: #d4edda; padding: 0.8rem; border-radius: 8px; margin-bottom: 0.5rem;'>
-                                <strong>{m['pitcher']}</strong> ({m['team']})<br>
-                                Predicted: {m['predicted_k']:.1f} Ks | Actual: <strong>{m['actual_k']} Ks</strong> (+{diff:.1f})
+                            <div style='background: #d4edda; padding: 0.8rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid #c3e6cb;'>
+                                <span style='color: #155724;'><strong>{m['pitcher']}</strong> ({m['team']})</span><br>
+                                <span style='color: #155724;'>Predicted: {m['predicted_k']:.1f} Ks | Actual: <strong>{m['actual_k']} Ks</strong> (+{diff:.1f})</span>
                             </div>
                             """, unsafe_allow_html=True)
                     else:
@@ -2537,9 +2668,9 @@ def main():
                         for m in underperformers[:5]:
                             diff = m["k_diff"]
                             st.markdown(f"""
-                            <div style='background: #f8d7da; padding: 0.8rem; border-radius: 8px; margin-bottom: 0.5rem;'>
-                                <strong>{m['pitcher']}</strong> ({m['team']})<br>
-                                Predicted: {m['predicted_k']:.1f} Ks | Actual: <strong>{m['actual_k']} Ks</strong> ({diff:.1f})
+                            <div style='background: #f8d7da; padding: 0.8rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid #f5c6cb;'>
+                                <span style='color: #721c24;'><strong>{m['pitcher']}</strong> ({m['team']})</span><br>
+                                <span style='color: #721c24;'>Predicted: {m['predicted_k']:.1f} Ks | Actual: <strong>{m['actual_k']} Ks</strong> ({diff:.1f})</span>
                             </div>
                             """, unsafe_allow_html=True)
                     else:
@@ -2554,6 +2685,8 @@ def main():
                     "Pitcher": m["pitcher"],
                     "Team": m["team"],
                     "SALCI": m["predicted_salci"],
+                    "Stuff": m.get("stuff_score") if m.get("stuff_score") else "-",
+                    "Loc": m.get("location_score") if m.get("location_score") else "-",
                     "Pred K": round(m["predicted_k"], 1),
                     "Actual K": m["actual_k"],
                     "Diff": f"{'+' if m['k_diff'] > 0 else ''}{m['k_diff']:.1f}",
@@ -2596,14 +2729,16 @@ def main():
         st.markdown("#### 💾 Save Today's Predictions")
         
         if st.button("📥 Save Current Predictions for Tomorrow's Reflection", use_container_width=True):
-            # Prepare predictions to save
+            # Prepare predictions to save (include Stuff/Location for reflection analysis)
             predictions_to_save = [{
                 "pitcher": p["pitcher"],
                 "team": p["team"],
                 "opponent": p["opponent"],
                 "salci": p["salci"],
                 "expected": p["expected"],
-                "lines": p["lines"]
+                "lines": p["lines"],
+                "stuff_score": p.get("stuff_score"),
+                "location_score": p.get("location_score")
             } for p in all_pitcher_results]
             
             if save_predictions(date_str, predictions_to_save):
