@@ -1,27 +1,31 @@
-# ⚾ SALCI v4.0 - Strikeout Adjusted Lineup Confidence Index
+# ⚾ SALCI v5.0 - Strikeout Adjusted Lineup Confidence Index
 
-An advanced MLB prediction model for pitcher strikeouts and hitter matchups, featuring **Stuff vs Location analysis** and **daily reflection learning**.
+An advanced MLB prediction model for pitcher strikeouts and hitter matchups, now featuring **real Statcast data integration**, **zone heat maps**, and **progressive analytics**.
 
-## 🆕 What's New in v4.0
+## 🆕 What's New in v5.0
 
-### Yesterday's Reflection 📈
-A postgame learning layer that compares yesterday's predictions to actual results:
-- Accuracy tracking (within ±1 K, ±2 K)
-- Overperformers and underperformers
-- Model calibration insights
-- Rolling 7-day accuracy trends
+### 🎯 Real Statcast Integration
+- **True Stuff+ / Location+ scores** calculated from pitch-level Statcast data
+- Velocity, spin rate, movement, and whiff rate for each pitch type
+- Zone-by-zone performance metrics
+- Graceful fallback to proxy metrics when Statcast unavailable
 
-### Stuff vs Location Analysis 💪🎯
-Separates pitcher dominance into two components:
-- **Stuff Score**: Raw pitch quality (velocity, movement, whiff rate)
-- **Location Score**: Pitch placement (edge%, zone%, heart%)
-- **Profile Classification**: Elite, Stuff-Dominant, Location-Dominant, Balanced, Limited
+### 🔥 Zone Heat Maps (NEW!)
+Interactive visualizations showing:
+- **Pitcher Attack Maps** - Where pitchers throw most and how effective each zone is
+- **Hitter Damage Maps** - Where hitters do the most damage (BA by zone)
+- **Matchup Collision Analysis** - Overlap between pitcher attack zones and hitter damage zones
 
-### Enhanced Visualizations 📊
-- Stuff/Location progress bars on pitcher cards
-- Game Day Card for Twitter/X sharing
-- K Line probability charts
-- Hitter K% vs AVG scatter plots
+### 📊 Enhanced Pitcher Arsenal Display
+- Per-pitch-type Stuff+ scores (FF, SL, CH, CU, etc.)
+- Velocity and movement breakdowns
+- Primary weapon identification
+
+### Everything from v4.0
+- Yesterday's Reflection (postgame learning)
+- Stuff vs Location analysis
+- Game Day Cards for social sharing
+- Confirmed lineup verification
 
 ---
 
@@ -57,38 +61,80 @@ SALCI combines pitcher metrics with opponent tendencies to predict strikeout per
 
 ---
 
-## Pitcher Profiles (v4.0)
+## Stuff+ / Location+ (v5.0)
 
-| Profile | Stuff | Location | Description |
-|---------|-------|----------|-------------|
-| ⚡ Complete | 75+ | 75+ | True ace |
-| 🔥 Stuff Dominant | 75+ | <65 | High ceiling, high variance |
-| 🎯 Location Master | <65 | 75+ | Consistent, low ceiling |
-| ⚖️ Balanced | 60-70 | 60-70 | Matchup-dependent |
-| ⚠️ Limited | <55 | <55 | Fade in most spots |
+### Stuff+ (Pitch Quality)
+Measures raw pitch "nastiness":
+- Fastball velocity
+- Movement (horizontal + vertical)
+- Spin rate
+- Whiff rate
+- Velocity differentials
+
+### Location+ (Command)
+Measures pitch placement:
+- Zone rate (pitches in strike zone)
+- Edge rate (painting corners)
+- Heart rate (avoiding middle-middle)
+- Chase rate induced
+- First pitch strike %
+
+### Pitcher Profiles
+
+| Profile | Stuff+ | Location+ | Description |
+|---------|--------|-----------|-------------|
+| ⚡ ELITE | 115+ | 110+ | True ace |
+| 🔥 STUFF-DOMINANT | 115+ | <100 | High ceiling, high variance |
+| 🎯 LOCATION-DOMINANT | <100 | 115+ | Consistent, lower ceiling |
+| ⚖️ BALANCED | 100-110 | 100-110 | Solid all-around |
+| ⚠️ LIMITED | <95 | <95 | Fade candidate |
 
 ---
 
 ## Features
 
-- 🎯 **Pitcher Analysis** - SALCI scores with Stuff/Location breakdown
-- 🏏 **Hitter Matchups** - Hot/cold streaks, platoon advantages, handedness
-- 📊 **Shareable Charts** - Game Day Card, K projections, scatter plots
+- 🎯 **Pitcher Analysis** - SALCI scores with real Stuff+/Location+
+- 🏏 **Hitter Matchups** - Hot/cold streaks, platoon advantages
+- 🔥 **Heat Maps** - Zone-by-zone attack and damage visualizations
+- 📊 **Shareable Charts** - Game Day Card, K projections
 - 📈 **Yesterday's Reflection** - Learn from yesterday's results
 - ✅ **Confirmed Lineups** - Only shows actual starters
 - 💾 **Prediction Storage** - Save predictions for next-day reflection
 
 ---
 
-## Local Development
+## Installation
+
+### Local Development
 
 ```bash
+# Clone the repo
+git clone https://github.com/yourusername/salci-mlb.git
+cd salci-mlb
+
 # Install dependencies
 pip install -r requirements.txt
 
 # Run the app
 streamlit run mlb_salci_full.py
 ```
+
+### Required Files
+
+| File | Description |
+|------|-------------|
+| `mlb_salci_full.py` | Main Streamlit application |
+| `statcast_connector.py` | Statcast/pybaseball integration |
+| `requirements.txt` | Python dependencies |
+
+### Statcast Data (Optional but Recommended)
+
+For real Statcast data:
+1. Install pybaseball: `pip install pybaseball`
+2. Place `statcast_connector.py` in the same folder as `mlb_salci_full.py`
+3. The app will automatically detect and use Statcast data
+
+Without pybaseball installed, the app will use proxy metrics (still functional, just less precise).
 
 ---
 
@@ -98,6 +144,21 @@ streamlit run mlb_salci_full.py
 2. Go to [share.streamlit.io](https://share.streamlit.io)
 3. Connect your repo
 4. Deploy!
+
+**Note:** Streamlit Cloud may have issues with pybaseball due to network restrictions. The app will fall back to proxy metrics automatically.
+
+---
+
+## Tabs Overview
+
+| Tab | Description |
+|-----|-------------|
+| ⚾ Pitcher Analysis | Full pitcher cards with SALCI, Stuff+, Location+ |
+| 🏏 Hitter Matchups | Hot/cold hitters, season + L7 stats |
+| 🎯 Best Bets | Top pitcher K props, hot hitter props |
+| 🔥 Heat Maps | Zone visualizations and matchup analysis |
+| 📊 Charts & Share | Game Day Card, exportable charts |
+| 📈 Yesterday | Prediction accuracy and model insights |
 
 ---
 
@@ -115,6 +176,7 @@ streamlit run mlb_salci_full.py
 
 ## Version History
 
+- **v5.0** - Statcast integration, zone heat maps, matchup collision analysis
 - **v4.0** - Yesterday's Reflection, Stuff/Location analysis, enhanced charts
 - **v3.2** - Handedness throughout, Game Day Card, shareable graphics
 - **v3.1** - Confirmed lineup verification, hitter analysis
@@ -125,4 +187,3 @@ streamlit run mlb_salci_full.py
 ---
 
 Built with ❤️ and Python | SALCI © 2025
-
