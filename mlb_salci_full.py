@@ -34,21 +34,33 @@ import json
 import os
 
 # ----------------------------
-# Statcast Integration (pybaseball)
+# Statcast Integration (pybaseball) & SALCI v2
 # ----------------------------
 STATCAST_AVAILABLE = False
+SALCI_V2_AVAILABLE = False
 try:
     from statcast_connector import (
+        # Statcast profile functions
         get_pitcher_statcast_profile,
         get_hitter_zone_profile,
         get_pitcher_attack_map,
         get_hitter_damage_map,
         analyze_matchup_zones,
+        # SALCI v2 scoring functions
+        calculate_stuff_plus,
+        calculate_location_plus,
+        calculate_workload_score,
+        calculate_matchup_score,
+        calculate_salci_v2,
+        calculate_expected_ks,
+        classify_pitcher_profile,
         PYBASEBALL_AVAILABLE
     )
     STATCAST_AVAILABLE = PYBASEBALL_AVAILABLE
+    SALCI_V2_AVAILABLE = True
 except ImportError:
     STATCAST_AVAILABLE = False
+    SALCI_V2_AVAILABLE = False
 
 # ----------------------------
 # Version Info
@@ -1935,10 +1947,19 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
             st.markdown(f"### {result['pitcher']} ({p_hand}HP)")
             st.markdown(f"**{result['team']}** vs {result['opponent']}")
             
-            # v4.0: Show Stuff/Location edge type
-            if result.get("stuff_score") and result.get("location_score"):
-                edge_type, edge_desc = get_edge_type(result["stuff_score"], result["location_score"])
-                st.markdown(f"<span style='font-size: 0.85rem;'>{edge_type}</span>", unsafe_allow_html=True)
+            # v5.0: Show profile type
+            if result.get("profile_type"):
+                profile_emoji = {
+                    "ELITE": "⚡", "STUFF-DOMINANT": "🔥", "LOCATION-DOMINANT": "🎯",
+                    "BALANCED-PLUS": "💪", "BALANCED": "⚖️", "ONE-TOOL": "📊", "LIMITED": "⚠️"
+                }.get(result["profile_type"], "📊")
+                st.markdown(f"<span style='font-size: 0.85rem;'>{profile_emoji} {result['profile_type']}</span>", 
+                           unsafe_allow_html=True)
+            
+            # v5.0: Show Statcast badge
+            if result.get("is_statcast"):
+                st.markdown("<span style='font-size: 0.7rem; background: #10b981; color: white; padding: 2px 6px; border-radius: 4px;'>🎯 Statcast</span>", 
+                           unsafe_allow_html=True)
         
         with col2:
             st.markdown(f"<div style='text-align: center;'>"
@@ -1948,44 +1969,111 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
         
         with col3:
             st.markdown(f"**Expected Ks:** {result['expected']}")
-            lines = result['lines']
-            cols = st.columns(4)
-            for i, (k, prob) in enumerate(list(lines.items())[1:5]):
-                with cols[i]:
-                    color = "#22c55e" if prob >= 65 else "#eab308" if prob >= 45 else "#ef4444"
-                    st.markdown(f"<div style='text-align:center;'><small>{k}+</small><br>"
-                               f"<span style='color:{color}; font-weight:bold;'>{prob}%</span></div>",
-                               unsafe_allow_html=True)
+            if result.get('k_per_ip'):
+                st.markdown(f"<span style='font-size: 0.75rem; color: #666;'>{result['k_per_ip']:.2f} K/IP × {result.get('projected_ip', 5.5):.1f} IP</span>", 
+                           unsafe_allow_html=True)
+            lines = result.get('lines', {})
+            if lines:
+                cols = st.columns(4)
+                for i, (k, prob) in enumerate(list(lines.items())[1:5]):
+                    with cols[i]:
+                        color = "#22c55e" if prob >= 65 else "#eab308" if prob >= 45 else "#ef4444"
+                        st.markdown(f"<div style='text-align:center;'><small>{k}+</small><br>"
+                                   f"<span style='color:{color}; font-weight:bold;'>{prob}%</span></div>",
+                                   unsafe_allow_html=True)
         
-        # v4.0: Stuff vs Location bar
-        if show_stuff_location and result.get("stuff_score") and result.get("location_score"):
-            stuff = result["stuff_score"]
-            location = result["location_score"]
+        # v5.0: SALCI v2 4-Component Breakdown
+        if show_stuff_location:
+            stuff = result.get("stuff_score")
+            location = result.get("location_score")
+            matchup = result.get("matchup_score")
+            workload = result.get("workload_score")
             
-            col_s, col_l = st.columns(2)
-            with col_s:
-                stuff_color = COLORS["stuff"]
-                st.markdown(f"""
-                <div style='display: flex; align-items: center; gap: 0.5rem;'>
-                    <span style='font-size: 0.8rem; color: {stuff_color}; font-weight: bold;'>STUFF</span>
-                    <div style='flex: 1; background: #e5e7eb; border-radius: 4px; height: 8px;'>
-                        <div style='width: {stuff}%; background: {stuff_color}; border-radius: 4px; height: 100%;'></div>
+            if stuff and location:
+                # Show 4-component bars
+                st.markdown("<div style='margin-top: 0.5rem;'>", unsafe_allow_html=True)
+                
+                col_s, col_l, col_m, col_w = st.columns(4)
+                
+                # Helper to get bar color based on score
+                def get_component_color(score, is_100_scale=True):
+                    if is_100_scale:
+                        # For Stuff+/Location+ (100 = average)
+                        if score >= 115: return "#10b981"  # Elite green
+                        if score >= 105: return "#22c55e"  # Good green
+                        if score >= 95: return "#eab308"   # Average yellow
+                        return "#ef4444"  # Below red
+                    else:
+                        # For 0-100 scale (Matchup/Workload)
+                        if score >= 65: return "#10b981"
+                        if score >= 50: return "#22c55e"
+                        if score >= 35: return "#eab308"
+                        return "#ef4444"
+                
+                # Stuff (30%)
+                with col_s:
+                    stuff_color = get_component_color(stuff, is_100_scale=True)
+                    # Normalize to percentage for bar (80-120 range → 0-100%)
+                    stuff_pct = min(100, max(0, (stuff - 70) * 2))
+                    st.markdown(f"""
+                    <div style='text-align: center;'>
+                        <div style='font-size: 0.7rem; color: #666;'>STUFF (30%)</div>
+                        <div style='font-size: 1.2rem; font-weight: bold; color: {stuff_color};'>{int(stuff)}</div>
+                        <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
+                            <div style='width: {stuff_pct}%; background: {stuff_color}; border-radius: 4px; height: 100%;'></div>
+                        </div>
                     </div>
-                    <span style='font-size: 0.8rem; font-weight: bold;'>{stuff}</span>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col_l:
-                loc_color = COLORS["location"]
-                st.markdown(f"""
-                <div style='display: flex; align-items: center; gap: 0.5rem;'>
-                    <span style='font-size: 0.8rem; color: {loc_color}; font-weight: bold;'>LOCATION</span>
-                    <div style='flex: 1; background: #e5e7eb; border-radius: 4px; height: 8px;'>
-                        <div style='width: {location}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
+                    """, unsafe_allow_html=True)
+                
+                # Location (25%)
+                with col_l:
+                    loc_color = get_component_color(location, is_100_scale=True)
+                    loc_pct = min(100, max(0, (location - 70) * 2))
+                    st.markdown(f"""
+                    <div style='text-align: center;'>
+                        <div style='font-size: 0.7rem; color: #666;'>LOCATION (25%)</div>
+                        <div style='font-size: 1.2rem; font-weight: bold; color: {loc_color};'>{int(location)}</div>
+                        <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
+                            <div style='width: {loc_pct}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
+                        </div>
                     </div>
-                    <span style='font-size: 0.8rem; font-weight: bold;'>{location}</span>
-                </div>
-                """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
+                
+                # Matchup (25%)
+                with col_m:
+                    if matchup:
+                        match_color = get_component_color(matchup, is_100_scale=False)
+                        st.markdown(f"""
+                        <div style='text-align: center;'>
+                            <div style='font-size: 0.7rem; color: #666;'>MATCHUP (25%)</div>
+                            <div style='font-size: 1.2rem; font-weight: bold; color: {match_color};'>{int(matchup)}</div>
+                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
+                                <div style='width: {matchup}%; background: {match_color}; border-radius: 4px; height: 100%;'></div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>MATCHUP<br>--</div>", 
+                                   unsafe_allow_html=True)
+                
+                # Workload (20%)
+                with col_w:
+                    if workload:
+                        work_color = get_component_color(workload, is_100_scale=False)
+                        st.markdown(f"""
+                        <div style='text-align: center;'>
+                            <div style='font-size: 0.7rem; color: #666;'>WORKLOAD (20%)</div>
+                            <div style='font-size: 1.2rem; font-weight: bold; color: {work_color};'>{int(workload)}</div>
+                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
+                                <div style='width: {workload}%; background: {work_color}; border-radius: 4px; height: 100%;'></div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>WORKLOAD<br>--</div>", 
+                                   unsafe_allow_html=True)
+                
+                st.markdown("</div>", unsafe_allow_html=True)
         
         st.progress(min(result["salci"] / 100, 1.0))
         st.markdown("---")
@@ -2139,24 +2227,35 @@ def main():
         
         st.markdown("---")
         
-        with st.expander("📊 About SALCI"):
+        with st.expander("📊 About SALCI v2"):
             st.markdown("""
-            **SALCI** = Strikeout Adjusted Lineup Confidence Index
+            **SALCI v2** = Strikeout Adjusted Lineup Confidence Index
             
-            **Pitcher Metrics:**
-            - K/9: Strikeouts per 9 innings
-            - K%: Strikeout rate
-            - K/BB: Strikeout to walk ratio
-            - P/IP: Pitches per inning
+            **SALCI v2 Component Weights:**
             
-            **Matchup Factors:**
-            - Opp K%: Opponent team strikeout rate
-            - Opp Contact%: Opponent contact rate
+            | Component | Weight | What It Measures |
+            |-----------|--------|------------------|
+            | **Stuff** | 30% | Raw pitch quality (velocity, movement, spin) |
+            | **Location** | 25% | Command and placement (zone%, edge%, chase) |
+            | **Matchup** | 25% | Opponent tendencies (K%, contact%) |
+            | **Workload** | 20% | Efficiency, projected IP, TTT risk |
             
-            **Hitter Grades:**
-            - 🟢 Favorable: Platoon advantage + low K%
-            - 🟡 Neutral: Mixed factors
-            - 🔴 Tough: Same-hand + high K%
+            **Stuff+ / Location+ Scale:**
+            - 100 = League Average
+            - 115+ = Elite
+            - 105-114 = Above Average
+            - 95-104 = Average
+            - < 95 = Below Average
+            
+            **Expected Ks Formula:**
+            ```
+            SALCI = (0.30 × Stuff) + (0.25 × Location) + (0.25 × Matchup) + (0.20 × Workload)
+            Expected Ks = (SALCI / 10) × Projected IP × Efficiency
+            ```
+            
+            **Data Sources:**
+            - 🎯 Statcast: Real physics-based metrics from Baseball Savant
+            - 📊 Proxy: Estimated metrics from MLB Stats API
             """)
     
     # Main content
@@ -2234,32 +2333,128 @@ def main():
             
             games_played = p_recent.get("games_sampled", 0) if p_recent else 0
             
-            salci, breakdown, missing = compute_salci(
-                p_recent, p_baseline, opp_recent, opp_baseline, weights, games_played
-            )
+            # ===========================================
+            # SALCI v2: Physics-Based 4-Component Model
+            # ===========================================
+            # Combine stats for calculations
+            combined_stats = {}
+            if p_recent:
+                combined_stats.update(p_recent)
+            if p_baseline:
+                for key in ["K9", "K_percent", "K/BB", "P/IP"]:
+                    if key in p_baseline and key in combined_stats:
+                        combined_stats[key] = combined_stats[key] * 0.6 + p_baseline[key] * 0.4
+                    elif key in p_baseline:
+                        combined_stats[key] = p_baseline[key]
+            
+            opp_stats = {}
+            if opp_recent:
+                opp_stats.update(opp_recent)
+            if opp_baseline:
+                for key in ["OppK%", "OppContact%"]:
+                    if key in opp_baseline and key in opp_stats:
+                        opp_stats[key] = opp_stats[key] * 0.6 + opp_baseline[key] * 0.4
+                    elif key in opp_baseline:
+                        opp_stats[key] = opp_baseline[key]
+            
+            # Try SALCI v2 with real Statcast data first
+            salci_v2_result = None
+            stuff_score = None
+            location_score = None
+            matchup_score = None
+            workload_score = None
+            stuff_breakdown = {}
+            location_breakdown = {}
+            matchup_breakdown = {}
+            workload_breakdown = {}
+            profile_type = "BALANCED"
+            profile_desc = ""
+            
+            if SALCI_V2_AVAILABLE and STATCAST_AVAILABLE:
+                try:
+                    # Get real Statcast profile
+                    statcast_profile = get_cached_statcast_profile(pid, days=30)
+                    
+                    if statcast_profile:
+                        # Real physics-based Stuff+ and Location+
+                        stuff_score = statcast_profile.get('stuff_plus', 100)
+                        location_score = statcast_profile.get('location_plus', 100)
+                        stuff_breakdown = statcast_profile.get('by_pitch_type', {})
+                        location_breakdown = statcast_profile.get('location_metrics', {})
+                        profile_type = statcast_profile.get('profile_type', 'BALANCED')
+                        profile_desc = statcast_profile.get('profile_description', '')
+                        
+                        # Workload score from pitcher stats
+                        workload_stats = {
+                            'P/IP': combined_stats.get('P/IP', 16.0),
+                            'avg_ip': combined_stats.get('total_ip', 5.5) / max(combined_stats.get('games_sampled', 1), 1),
+                            'deep_game_pct': 0.40,  # Default - would need game logs
+                            'ttt_woba_diff': 0.0    # Default - would need splits data
+                        }
+                        workload_score, workload_breakdown = calculate_workload_score(workload_stats)
+                        
+                        # Matchup score from opponent stats
+                        opp_lineup_info = game_lineups[opp_side]
+                        lineup_hand_info = None
+                        if opp_lineup_info.get('lineup'):
+                            same_side = sum(1 for p in opp_lineup_info['lineup'] 
+                                          if (pitcher_hand == 'R' and p.get('bat_side') == 'R') or
+                                             (pitcher_hand == 'L' and p.get('bat_side') == 'L'))
+                            lineup_hand_info = {'same_side_pct': same_side / max(len(opp_lineup_info['lineup']), 1)}
+                        
+                        matchup_score, matchup_breakdown = calculate_matchup_score(
+                            opp_stats, pitcher_hand, lineup_hand_info
+                        )
+                        
+                        # Calculate SALCI v2
+                        salci_v2_result = calculate_salci_v2(
+                            stuff_score, location_score, matchup_score, workload_score
+                        )
+                except Exception as e:
+                    # Fall back to v1 if v2 fails
+                    pass
+            
+            # Fall back to v1 SALCI if v2 not available or failed
+            if salci_v2_result:
+                salci = salci_v2_result['salci']
+                breakdown = salci_v2_result['components']
+            else:
+                # Use v1 calculation as fallback
+                salci, breakdown, missing = compute_salci(
+                    p_recent, p_baseline, opp_recent, opp_baseline, weights, games_played
+                )
+                
+                # Calculate proxy Stuff/Location for display
+                if combined_stats:
+                    stuff_score, stuff_breakdown = calculate_stuff_score(combined_stats, player_id=pid)
+                    location_score, location_breakdown = calculate_location_score(combined_stats, player_id=pid)
+                    
+                    # Generate proxy matchup/workload scores
+                    matchup_score, matchup_breakdown = calculate_matchup_score(opp_stats, pitcher_hand) if opp_stats else (50, {})
+                    workload_stats = {'P/IP': combined_stats.get('P/IP', 16.0), 'avg_ip': 5.5, 'deep_game_pct': 0.40, 'ttt_woba_diff': 0}
+                    workload_score, workload_breakdown = calculate_workload_score(workload_stats)
             
             if salci is not None:
                 base_k9 = (p_baseline or p_recent or {}).get("K9", 9.0)
-                proj = project_lines(salci, base_k9)
                 pitcher_k_pct = (p_baseline or p_recent or {}).get("K_percent", 0.22)
                 
+                # Calculate expected Ks using SALCI v2 method
+                if salci_v2_result:
+                    avg_ip = combined_stats.get('total_ip', 5.5) / max(combined_stats.get('games_sampled', 1), 1)
+                    efficiency = 1.0 - (combined_stats.get('P/IP', 16) - 15) * 0.05  # Penalty for high P/IP
+                    efficiency = max(0.8, min(1.1, efficiency))
+                    
+                    k_projection = calculate_expected_ks(salci, avg_ip, efficiency)
+                    proj = {
+                        'expected': k_projection['expected_ks'],
+                        'lines': k_projection['lines'],
+                        'k_per_ip': k_projection['k_per_ip'],
+                        'projected_ip': k_projection['projected_ip']
+                    }
+                else:
+                    proj = project_lines(salci, base_k9)
+                
                 opp_lineup_info = game_lineups[opp_side]
-                
-                # v5.0: Calculate Stuff and Location scores (with Statcast if available)
-                combined_stats = {}
-                if p_recent:
-                    combined_stats.update(p_recent)
-                if p_baseline:
-                    # Blend baseline with recent if both exist
-                    for key in ["K9", "K_percent", "K/BB", "P/IP"]:
-                        if key in p_baseline and key in combined_stats:
-                            combined_stats[key] = combined_stats[key] * 0.6 + p_baseline[key] * 0.4
-                        elif key in p_baseline:
-                            combined_stats[key] = p_baseline[key]
-                
-                # Pass player_id for Statcast lookup
-                stuff_score, stuff_breakdown = calculate_stuff_score(combined_stats, player_id=pid) if combined_stats else (None, {})
-                location_score, location_breakdown = calculate_location_score(combined_stats, player_id=pid) if combined_stats else (None, {})
                 
                 all_pitcher_results.append({
                     "pitcher": pitcher,
@@ -2272,14 +2467,23 @@ def main():
                     "game_pk": game_pk,
                     "salci": salci,
                     "expected": proj["expected"],
-                    "lines": proj["lines"],
+                    "lines": proj.get("lines", {}),
                     "breakdown": breakdown,
                     "lineup_confirmed": opp_lineup_info["confirmed"],
-                    # v4.0: Stuff/Location
+                    # v5.0 SALCI v2 Components
                     "stuff_score": stuff_score,
                     "location_score": location_score,
+                    "matchup_score": matchup_score,
+                    "workload_score": workload_score,
                     "stuff_breakdown": stuff_breakdown,
                     "location_breakdown": location_breakdown,
+                    "matchup_breakdown": matchup_breakdown,
+                    "workload_breakdown": workload_breakdown,
+                    "profile_type": profile_type,
+                    "profile_desc": profile_desc,
+                    "is_statcast": salci_v2_result is not None,
+                    "k_per_ip": proj.get("k_per_ip"),
+                    "projected_ip": proj.get("projected_ip"),
                 })
             
             # Hitter stats - ONLY from confirmed lineups

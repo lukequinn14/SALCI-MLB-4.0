@@ -1,105 +1,99 @@
 # ⚾ SALCI v5.0 - Strikeout Adjusted Lineup Confidence Index
 
-An advanced MLB prediction model for pitcher strikeouts and hitter matchups, now featuring **real Statcast data integration**, **zone heat maps**, and **progressive analytics**.
+An advanced MLB prediction model featuring **physics-based Stuff+ calculations**, **SALCI v2 formula**, and **real Statcast data integration**.
 
 ## 🆕 What's New in v5.0
 
-### 🎯 Real Statcast Integration
-- **True Stuff+ / Location+ scores** calculated from pitch-level Statcast data
-- Velocity, spin rate, movement, and whiff rate for each pitch type
-- Zone-by-zone performance metrics
-- Graceful fallback to proxy metrics when Statcast unavailable
+### 🧮 SALCI v2 Formula
+A complete redesign of the scoring model with 4 balanced components:
 
-### 🔥 Zone Heat Maps (NEW!)
-Interactive visualizations showing:
-- **Pitcher Attack Maps** - Where pitchers throw most and how effective each zone is
-- **Hitter Damage Maps** - Where hitters do the most damage (BA by zone)
-- **Matchup Collision Analysis** - Overlap between pitcher attack zones and hitter damage zones
+| Component | Weight | What It Measures |
+|-----------|--------|------------------|
+| **Stuff** | 30% | Raw pitch quality (velocity, movement, spin, release point) |
+| **Location** | 25% | Command and placement (zone%, edge%, chase rate, CSW%) |
+| **Matchup** | 25% | Opponent tendencies (team K%, contact%, platoon) |
+| **Workload** | 20% | Efficiency, projected IP, TTT risk |
 
-### 📊 Enhanced Pitcher Arsenal Display
-- Per-pitch-type Stuff+ scores (FF, SL, CH, CU, etc.)
-- Velocity and movement breakdowns
-- Primary weapon identification
+**Why v2?** The v1 model over-weighted stuff and under-weighted workload. High-stuff arms often got pulled after 5 IP, capping K totals. v2 better predicts *sustainable* strikeouts.
 
-### Everything from v4.0
-- Yesterday's Reflection (postgame learning)
-- Stuff vs Location analysis
-- Game Day Cards for social sharing
-- Confirmed lineup verification
+### 🎯 Physics-Based Stuff+ (Not Proxy Metrics)
+- Uses **only physical traits**: velocity, movement (pfx_x, pfx_z), spin rate, extension
+- Does NOT use outcomes (K%, whiff%) as inputs
+- Per-pitch-type calculations (FF, SL, CU, CH, etc.)
+- Normalized to 100 = league average, 10 points = 1 std dev
 
----
+### 🔥 Real Statcast Integration
+- Connects to Baseball Savant via pybaseball
+- Graceful fallback to proxy metrics when unavailable
+- Sidebar shows "🎯 Statcast: Connected" or "📊 Using proxy metrics"
 
-## How SALCI Works
-
-SALCI combines pitcher metrics with opponent tendencies to predict strikeout performance:
-
-### Pitcher Metrics (60%)
-| Metric | Description | Weight |
-|--------|-------------|--------|
-| K/9 | Strikeouts per 9 innings | 18% |
-| K% | Strikeout rate | 18% |
-| K/BB | Strikeout to walk ratio | 14% |
-| P/IP | Pitches per inning (efficiency) | 10% |
-
-### Matchup Factors (40%)
-| Metric | Description | Weight |
-|--------|-------------|--------|
-| Opp K% | Opponent team's strikeout rate | 22% |
-| Opp Contact% | Opponent's contact rate | 18% |
+### 📊 Heat Maps Tab
+- Pitcher Attack Maps (where they throw, whiff rates by zone)
+- Hitter Damage Maps (batting average by zone)
+- Matchup Collision Analysis
 
 ---
 
-## SALCI Rating Scale
+## How SALCI v2 Works
+
+### The Formula
+```
+SALCI_v2 = (0.30 × Stuff) + (0.25 × Location) + (0.25 × Matchup) + (0.20 × Workload)
+
+Expected_Ks = (SALCI_v2 / 10) × Projected_IP × Efficiency_Factor
+```
+
+### Stuff+ Calculation (Physics-Based)
+Each pitch type has its own formula based on what makes that pitch effective:
+
+| Pitch | Key Components | Weights |
+|-------|----------------|---------|
+| **Four-Seam (FF)** | Velocity, Induced Vertical Break, Extension | 50/35/5 |
+| **Slider (SL/ST)** | Horizontal Sweep, Drop, Velo Diff | 40/30/15 |
+| **Curveball (CU)** | Vertical Drop, Spin Rate, Velo Diff | 45/25/20 |
+| **Changeup (CH)** | Velo Diff, Arm-Side Fade, Drop | 35/30/35 |
+
+### Location+ Calculation
+| Component | Weight | Optimal |
+|-----------|--------|---------|
+| Zone Rate | 10% | ~45-50% (not too high) |
+| Edge Rate | 25% | Higher is better |
+| Heart Rate | 20% | Lower is better |
+| Chase Rate | 20% | Higher is better |
+| First Pitch Strike | 10% | Higher is better |
+| CSW% | 15% | Higher is better |
+
+### Workload Score (NEW in v2)
+| Component | Weight | What It Measures |
+|-----------|--------|------------------|
+| P/IP | 30% | Pitches per inning (efficiency) |
+| Avg IP | 35% | Projected innings |
+| Deep Game % | 20% | Rate of 6+ IP starts |
+| TTT Risk | 15% | Third-time-through penalty |
+
+---
+
+## Stuff+ / Location+ Scale
 
 | Score | Rating | Meaning |
 |-------|--------|---------|
-| 75+ | 🔥 Elite | Top-tier K potential |
-| 60-74 | ✅ Strong | Above average |
-| 45-59 | ➖ Average | Coin flip |
-| 30-44 | ⚠️ Below Avg | Fade territory |
-| <30 | ❌ Poor | Stay away |
+| 115+ | Elite | Top-tier |
+| 105-114 | Above Average | Strong |
+| 95-104 | Average | League average |
+| < 95 | Below Average | Fade candidate |
 
 ---
 
-## Stuff+ / Location+ (v5.0)
-
-### Stuff+ (Pitch Quality)
-Measures raw pitch "nastiness":
-- Fastball velocity
-- Movement (horizontal + vertical)
-- Spin rate
-- Whiff rate
-- Velocity differentials
-
-### Location+ (Command)
-Measures pitch placement:
-- Zone rate (pitches in strike zone)
-- Edge rate (painting corners)
-- Heart rate (avoiding middle-middle)
-- Chase rate induced
-- First pitch strike %
-
-### Pitcher Profiles
+## Pitcher Profile Types
 
 | Profile | Stuff+ | Location+ | Description |
 |---------|--------|-----------|-------------|
 | ⚡ ELITE | 115+ | 110+ | True ace |
 | 🔥 STUFF-DOMINANT | 115+ | <100 | High ceiling, high variance |
 | 🎯 LOCATION-DOMINANT | <100 | 115+ | Consistent, lower ceiling |
-| ⚖️ BALANCED | 100-110 | 100-110 | Solid all-around |
+| 💪 BALANCED-PLUS | 105+ | 105+ | Quality all-around |
+| ⚖️ BALANCED | 95-104 | 95-104 | Matchup-dependent |
 | ⚠️ LIMITED | <95 | <95 | Fade candidate |
-
----
-
-## Features
-
-- 🎯 **Pitcher Analysis** - SALCI scores with real Stuff+/Location+
-- 🏏 **Hitter Matchups** - Hot/cold streaks, platoon advantages
-- 🔥 **Heat Maps** - Zone-by-zone attack and damage visualizations
-- 📊 **Shareable Charts** - Game Day Card, K projections
-- 📈 **Yesterday's Reflection** - Learn from yesterday's results
-- ✅ **Confirmed Lineups** - Only shows actual starters
-- 💾 **Prediction Storage** - Save predictions for next-day reflection
 
 ---
 
@@ -124,28 +118,17 @@ streamlit run mlb_salci_full.py
 | File | Description |
 |------|-------------|
 | `mlb_salci_full.py` | Main Streamlit application |
-| `statcast_connector.py` | Statcast/pybaseball integration |
+| `statcast_connector.py` | Physics-based Stuff+/Location+ calculator |
 | `requirements.txt` | Python dependencies |
 
-### Statcast Data (Optional but Recommended)
+### Statcast Data (Recommended)
 
-For real Statcast data:
-1. Install pybaseball: `pip install pybaseball`
-2. Place `statcast_connector.py` in the same folder as `mlb_salci_full.py`
-3. The app will automatically detect and use Statcast data
+For real physics-based Stuff+:
+```bash
+pip install pybaseball
+```
 
-Without pybaseball installed, the app will use proxy metrics (still functional, just less precise).
-
----
-
-## Deployment (Streamlit Cloud)
-
-1. Push this repo to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Connect your repo
-4. Deploy!
-
-**Note:** Streamlit Cloud may have issues with pybaseball due to network restrictions. The app will fall back to proxy metrics automatically.
+Place `statcast_connector.py` in the same folder as `mlb_salci_full.py`. The app will automatically detect and use Statcast data.
 
 ---
 
@@ -153,12 +136,20 @@ Without pybaseball installed, the app will use proxy metrics (still functional, 
 
 | Tab | Description |
 |-----|-------------|
-| ⚾ Pitcher Analysis | Full pitcher cards with SALCI, Stuff+, Location+ |
+| ⚾ Pitcher Analysis | SALCI v2 scores with 4-component breakdown |
 | 🏏 Hitter Matchups | Hot/cold hitters, season + L7 stats |
 | 🎯 Best Bets | Top pitcher K props, hot hitter props |
 | 🔥 Heat Maps | Zone visualizations and matchup analysis |
 | 📊 Charts & Share | Game Day Card, exportable charts |
 | 📈 Yesterday | Prediction accuracy and model insights |
+
+---
+
+## Data Sources
+
+- **MLB Stats API**: Game schedules, lineups, pitcher/hitter stats
+- **Baseball Savant (Statcast)**: Pitch-level data via pybaseball
+- Lineups typically released 1-2 hours before game time
 
 ---
 
@@ -168,19 +159,11 @@ Without pybaseball installed, the app will use proxy metrics (still functional, 
 
 ---
 
-## Follow Along
-
-🐦 Follow [#SALCI](https://twitter.com/search?q=%23SALCI) on Twitter/X for daily insights!
-
----
-
 ## Version History
 
-- **v5.0** - Statcast integration, zone heat maps, matchup collision analysis
-- **v4.0** - Yesterday's Reflection, Stuff/Location analysis, enhanced charts
-- **v3.2** - Handedness throughout, Game Day Card, shareable graphics
-- **v3.1** - Confirmed lineup verification, hitter analysis
-- **v3.0** - Streamlit web UI, interactive charts
+- **v5.0** - SALCI v2 formula, physics-based Stuff+, Statcast integration, heat maps
+- **v4.0** - Yesterday's Reflection, Stuff/Location analysis
+- **v3.x** - Streamlit UI, hitter analysis, Game Day Cards
 - **v2.0** - Hitter matchups, hot/cold streaks
 - **v1.0** - Basic pitcher SALCI scoring
 
