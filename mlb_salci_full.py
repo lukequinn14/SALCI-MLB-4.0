@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-SALCI v5.0 - Advanced MLB Prediction System
+SALCI v5.1 - Advanced MLB Prediction System
 Strikeout Adjusted Lineup Confidence Index
 
-NEW IN v5.0:
-- 🎯 REAL Statcast Data Integration (pybaseball)
+NEW IN v5.1:
+- 🎯 SALCI v3 K-Optimized Weights: Stuff 40%, Matchup 25%, Workload 20%, Location 15%
+- 📋 Lineup-Level Matchup: Uses individual hitter K% when lineup confirmed
+- 🎪 Arsenal Display: Per-pitch Stuff+ scores on pitcher cards
+- 📊 Sortable Table View: Quick-scan all pitchers with grades and K-lines
+- 📈 Model Accuracy Dashboard: 7-day and 30-day rolling performance tracking
+- ⚡ Leash Factor: Manager tendencies in workload calculation
+
+INCLUDED FROM v5.0:
+- 🎯 Real Statcast Data Integration (pybaseball)
 - 📊 True Stuff+ / Location+ calculations from pitch-level data
 - 🔥 Heat Maps - Pitcher attack zones vs hitter damage zones
-- 📈 Rolling Accuracy Dashboard (7-day and 30-day)
 - 💡 Progressive Disclosure UI (expandable advanced sections)
-
-STILL INCLUDED (v4.0):
-- Yesterday's Reflection (postgame learning layer)
-- Stuff vs Location analysis (pitch quality vs placement)
 
 Run with:
     streamlit run mlb_salci_full.py
@@ -34,10 +37,10 @@ import json
 import os
 
 # ----------------------------
-# Statcast Integration (pybaseball) & SALCI v2
+# Statcast Integration (pybaseball) & SALCI v3
 # ----------------------------
 STATCAST_AVAILABLE = False
-SALCI_V2_AVAILABLE = False
+SALCI_V3_AVAILABLE = False
 try:
     from statcast_connector import (
         # Statcast profile functions
@@ -46,27 +49,34 @@ try:
         get_pitcher_attack_map,
         get_hitter_damage_map,
         analyze_matchup_zones,
-        # SALCI v2 scoring functions
+        # SALCI v3 scoring functions
         calculate_stuff_plus,
         calculate_location_plus,
+        calculate_workload_score_v3,
+        calculate_matchup_score_v3,
+        calculate_salci_v3,
+        calculate_expected_ks_v3,
+        classify_pitcher_profile,
+        get_component_grade,
+        # v3 weights
+        SALCI_V3_WEIGHTS,
+        MATCHUP_SUBWEIGHTS,
+        # Backward compat
         calculate_workload_score,
         calculate_matchup_score,
-        calculate_salci_v2,
-        calculate_expected_ks,
-        classify_pitcher_profile,
         PYBASEBALL_AVAILABLE
     )
     STATCAST_AVAILABLE = PYBASEBALL_AVAILABLE
-    SALCI_V2_AVAILABLE = True
+    SALCI_V3_AVAILABLE = True
 except ImportError:
     STATCAST_AVAILABLE = False
-    SALCI_V2_AVAILABLE = False
+    SALCI_V3_AVAILABLE = False
 
 # ----------------------------
 # Version Info
 # ----------------------------
-SALCI_VERSION = "5.0"
-SALCI_BUILD_DATE = "2026-04-01"
+SALCI_VERSION = "5.1"
+SALCI_BUILD_DATE = "2026-04-03"
 
 # ----------------------------
 # Page Configuration
@@ -1947,7 +1957,7 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
             st.markdown(f"### {result['pitcher']} ({p_hand}HP)")
             st.markdown(f"**{result['team']}** vs {result['opponent']}")
             
-            # v5.0: Show profile type
+            # v5.1: Show profile type and grade
             if result.get("profile_type"):
                 profile_emoji = {
                     "ELITE": "⚡", "STUFF-DOMINANT": "🔥", "LOCATION-DOMINANT": "🎯",
@@ -1956,21 +1966,27 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                 st.markdown(f"<span style='font-size: 0.85rem;'>{profile_emoji} {result['profile_type']}</span>", 
                            unsafe_allow_html=True)
             
-            # v5.0: Show Statcast badge
+            # v5.1: Show Statcast badge + matchup source
+            badges = []
             if result.get("is_statcast"):
-                st.markdown("<span style='font-size: 0.7rem; background: #10b981; color: white; padding: 2px 6px; border-radius: 4px;'>🎯 Statcast</span>", 
-                           unsafe_allow_html=True)
+                badges.append("<span style='font-size: 0.7rem; background: #10b981; color: white; padding: 2px 6px; border-radius: 4px;'>🎯 Statcast</span>")
+            if result.get("matchup_source") == "lineup":
+                badges.append("<span style='font-size: 0.7rem; background: #3b82f6; color: white; padding: 2px 6px; border-radius: 4px;'>📋 Lineup Match</span>")
+            if badges:
+                st.markdown(" ".join(badges), unsafe_allow_html=True)
         
         with col2:
+            grade = result.get("salci_grade", "C")
             st.markdown(f"<div style='text-align: center;'>"
                        f"<span style='font-size: 2.5rem; font-weight: bold;'>{result['salci']}</span><br>"
-                       f"<span class='{css_class}'>{emoji} {rating_label}</span></div>",
+                       f"<span class='{css_class}'>{emoji} Grade {grade}</span></div>",
                        unsafe_allow_html=True)
         
         with col3:
             st.markdown(f"**Expected Ks:** {result['expected']}")
+            best_line = result.get('best_line', 5)
             if result.get('k_per_ip'):
-                st.markdown(f"<span style='font-size: 0.75rem; color: #666;'>{result['k_per_ip']:.2f} K/IP × {result.get('projected_ip', 5.5):.1f} IP</span>", 
+                st.markdown(f"<span style='font-size: 0.75rem; color: #666;'>{result['k_per_ip']:.2f} K/IP × {result.get('projected_ip', 5.5):.1f} IP | Best: {best_line}+</span>", 
                            unsafe_allow_html=True)
             lines = result.get('lines', {})
             if lines:
@@ -1982,7 +1998,7 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                                    f"<span style='color:{color}; font-weight:bold;'>{prob}%</span></div>",
                                    unsafe_allow_html=True)
         
-        # v5.0: SALCI v2 4-Component Breakdown
+        # v5.1: SALCI v3 4-Component Breakdown (K-Optimized Weights)
         if show_stuff_location:
             stuff = result.get("stuff_score")
             location = result.get("location_score")
@@ -1990,51 +2006,34 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
             workload = result.get("workload_score")
             
             if stuff and location:
-                # Show 4-component bars
+                # Show 4-component bars with v3 weights
                 st.markdown("<div style='margin-top: 0.5rem;'>", unsafe_allow_html=True)
                 
-                col_s, col_l, col_m, col_w = st.columns(4)
+                col_s, col_m, col_w, col_l = st.columns(4)  # Reordered by importance
                 
                 # Helper to get bar color based on score
                 def get_component_color(score, is_100_scale=True):
                     if is_100_scale:
-                        # For Stuff+/Location+ (100 = average)
-                        if score >= 115: return "#10b981"  # Elite green
-                        if score >= 105: return "#22c55e"  # Good green
-                        if score >= 95: return "#eab308"   # Average yellow
-                        return "#ef4444"  # Below red
+                        if score >= 115: return "#10b981"
+                        if score >= 105: return "#22c55e"
+                        if score >= 95: return "#eab308"
+                        return "#ef4444"
                     else:
-                        # For 0-100 scale (Matchup/Workload)
                         if score >= 65: return "#10b981"
                         if score >= 50: return "#22c55e"
                         if score >= 35: return "#eab308"
                         return "#ef4444"
                 
-                # Stuff (30%)
+                # Stuff (40%) - MOST IMPORTANT for Ks
                 with col_s:
                     stuff_color = get_component_color(stuff, is_100_scale=True)
-                    # Normalize to percentage for bar (80-120 range → 0-100%)
                     stuff_pct = min(100, max(0, (stuff - 70) * 2))
                     st.markdown(f"""
                     <div style='text-align: center;'>
-                        <div style='font-size: 0.7rem; color: #666;'>STUFF (30%)</div>
+                        <div style='font-size: 0.7rem; color: #666;'>⚡ STUFF (40%)</div>
                         <div style='font-size: 1.2rem; font-weight: bold; color: {stuff_color};'>{int(stuff)}</div>
                         <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
                             <div style='width: {stuff_pct}%; background: {stuff_color}; border-radius: 4px; height: 100%;'></div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Location (25%)
-                with col_l:
-                    loc_color = get_component_color(location, is_100_scale=True)
-                    loc_pct = min(100, max(0, (location - 70) * 2))
-                    st.markdown(f"""
-                    <div style='text-align: center;'>
-                        <div style='font-size: 0.7rem; color: #666;'>LOCATION (25%)</div>
-                        <div style='font-size: 1.2rem; font-weight: bold; color: {loc_color};'>{int(location)}</div>
-                        <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
-                            <div style='width: {loc_pct}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -2045,7 +2044,7 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         match_color = get_component_color(matchup, is_100_scale=False)
                         st.markdown(f"""
                         <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>MATCHUP (25%)</div>
+                            <div style='font-size: 0.7rem; color: #666;'>🎯 MATCHUP (25%)</div>
                             <div style='font-size: 1.2rem; font-weight: bold; color: {match_color};'>{int(matchup)}</div>
                             <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
                                 <div style='width: {matchup}%; background: {match_color}; border-radius: 4px; height: 100%;'></div>
@@ -2062,7 +2061,7 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         work_color = get_component_color(workload, is_100_scale=False)
                         st.markdown(f"""
                         <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>WORKLOAD (20%)</div>
+                            <div style='font-size: 0.7rem; color: #666;'>📊 WORKLOAD (20%)</div>
                             <div style='font-size: 1.2rem; font-weight: bold; color: {work_color};'>{int(workload)}</div>
                             <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
                                 <div style='width: {workload}%; background: {work_color}; border-radius: 4px; height: 100%;'></div>
@@ -2073,10 +2072,105 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>WORKLOAD<br>--</div>", 
                                    unsafe_allow_html=True)
                 
+                # Location (15%) - Least important for Ks
+                with col_l:
+                    loc_color = get_component_color(location, is_100_scale=True)
+                    loc_pct = min(100, max(0, (location - 70) * 2))
+                    st.markdown(f"""
+                    <div style='text-align: center;'>
+                        <div style='font-size: 0.7rem; color: #666;'>📍 LOCATION (15%)</div>
+                        <div style='font-size: 1.2rem; font-weight: bold; color: {loc_color};'>{int(location)}</div>
+                        <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
+                            <div style='width: {loc_pct}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
                 st.markdown("</div>", unsafe_allow_html=True)
+                
+                # v5.1: Arsenal Display (pitch mix with per-pitch Stuff+)
+                stuff_breakdown = result.get("stuff_breakdown", {})
+                if stuff_breakdown and result.get("is_statcast"):
+                    render_arsenal_display(stuff_breakdown)
         
         st.progress(min(result["salci"] / 100, 1.0))
         st.markdown("---")
+
+
+def render_arsenal_display(stuff_breakdown: Dict):
+    """Render pitch arsenal with per-pitch Stuff+ scores."""
+    if not stuff_breakdown:
+        return
+    
+    # Sort pitches by usage
+    pitches = []
+    for pitch_type, data in stuff_breakdown.items():
+        if isinstance(data, dict) and data.get('usage_pct', 0) >= 5:  # Only show pitches with 5%+ usage
+            pitches.append({
+                'type': pitch_type,
+                'stuff': data.get('stuff_plus', 100),
+                'velo': data.get('velocity', 0),
+                'usage': data.get('usage_pct', 0),
+                'whiff': data.get('observed_whiff_pct', 0)
+            })
+    
+    if not pitches:
+        return
+    
+    pitches.sort(key=lambda x: x['usage'], reverse=True)
+    
+    # Pitch type display names and colors
+    pitch_names = {
+        'FF': ('4-Seam', '#ef4444'),      # Red
+        'SI': ('Sinker', '#f97316'),       # Orange
+        'FC': ('Cutter', '#eab308'),       # Yellow
+        'SL': ('Slider', '#22c55e'),       # Green
+        'ST': ('Sweeper', '#14b8a6'),      # Teal
+        'CU': ('Curve', '#3b82f6'),        # Blue
+        'KC': ('Knuckle-C', '#6366f1'),    # Indigo
+        'CH': ('Change', '#a855f7'),       # Purple
+        'FS': ('Splitter', '#ec4899'),     # Pink
+        'SV': ('Slurve', '#06b6d4'),       # Cyan
+    }
+    
+    # Build arsenal HTML
+    arsenal_html = "<div style='margin-top: 0.5rem; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 8px;'>"
+    arsenal_html += "<div style='font-size: 0.7rem; color: #666; margin-bottom: 4px;'>🎪 ARSENAL</div>"
+    arsenal_html += "<div style='display: flex; flex-wrap: wrap; gap: 8px;'>"
+    
+    for pitch in pitches[:5]:  # Max 5 pitches
+        p_type = pitch['type']
+        name, color = pitch_names.get(p_type, (p_type, '#6b7280'))
+        stuff = pitch['stuff']
+        velo = pitch['velo']
+        usage = pitch['usage']
+        whiff = pitch['whiff']
+        
+        # Stuff+ color coding
+        if stuff >= 115:
+            stuff_color = "#10b981"
+            stuff_bg = "rgba(16, 185, 129, 0.1)"
+        elif stuff >= 105:
+            stuff_color = "#22c55e"
+            stuff_bg = "rgba(34, 197, 94, 0.1)"
+        elif stuff >= 95:
+            stuff_color = "#6b7280"
+            stuff_bg = "rgba(107, 114, 128, 0.1)"
+        else:
+            stuff_color = "#ef4444"
+            stuff_bg = "rgba(239, 68, 68, 0.1)"
+        
+        arsenal_html += f"""
+        <div style='background: {stuff_bg}; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; min-width: 80px;'>
+            <div style='font-size: 0.75rem; font-weight: bold; color: {color};'>{name}</div>
+            <div style='font-size: 0.65rem; color: #666;'>{velo:.0f} mph • {usage:.0f}%</div>
+            <div style='font-size: 0.85rem; font-weight: bold; color: {stuff_color};'>Stuff+ {int(stuff)}</div>
+            <div style='font-size: 0.6rem; color: #888;'>Whiff {whiff:.0f}%</div>
+        </div>
+        """
+    
+    arsenal_html += "</div></div>"
+    st.markdown(arsenal_html, unsafe_allow_html=True)
 
 
 def render_hitter_card(hitter: Dict, show_batting_order: bool = True):
@@ -2227,31 +2321,33 @@ def main():
         
         st.markdown("---")
         
-        with st.expander("📊 About SALCI v2"):
+        with st.expander("📊 About SALCI v3"):
             st.markdown("""
-            **SALCI v2** = Strikeout Adjusted Lineup Confidence Index
+            **SALCI v3** = Strikeout Adjusted Lineup Confidence Index
             
-            **SALCI v2 Component Weights:**
+            *Optimized for strikeout prediction - Stuff is king!*
+            
+            **SALCI v3 Component Weights:**
             
             | Component | Weight | What It Measures |
             |-----------|--------|------------------|
-            | **Stuff** | 30% | Raw pitch quality (velocity, movement, spin) |
-            | **Location** | 25% | Command and placement (zone%, edge%, chase) |
-            | **Matchup** | 25% | Opponent tendencies (K%, contact%) |
-            | **Workload** | 20% | Efficiency, projected IP, TTT risk |
+            | **Stuff** | 40% | Raw pitch quality (velocity, movement, spin) |
+            | **Matchup** | 25% | Opponent K% (15%) + Zone Contact% (10%) |
+            | **Workload** | 20% | Leash factor, projected BF, TTT penalty |
+            | **Location** | 15% | Command (less important for Ks) |
             
-            **Stuff+ / Location+ Scale:**
-            - 100 = League Average
-            - 115+ = Elite
-            - 105-114 = Above Average
-            - 95-104 = Average
-            - < 95 = Below Average
+            **v3 Changes from v2:**
+            - Stuff ↑ (30% → 40%): Whiffs drive Ks
+            - Location ↓ (25% → 15%): High location = pitching to contact
+            - Matchup split: K-propensity vs Zone Contact
+            - Lineup-level matchup: Uses individual hitter K%
             
-            **Expected Ks Formula:**
-            ```
-            SALCI = (0.30 × Stuff) + (0.25 × Location) + (0.25 × Matchup) + (0.20 × Workload)
-            Expected Ks = (SALCI / 10) × Projected IP × Efficiency
-            ```
+            **Grading Scale:**
+            - A (70+): Elite K upside
+            - B (60-69): Strong K potential  
+            - C (50-59): Average
+            - D (40-49): Below average
+            - F (<40): Fade
             
             **Data Sources:**
             - 🎯 Statcast: Real physics-based metrics from Baseball Savant
@@ -2262,14 +2358,15 @@ def main():
     date_str = selected_date.strftime("%Y-%m-%d")
     weights = WEIGHT_PRESETS[preset_key]["weights"]
     
-    # v5.0: Updated tabs with Heat Maps
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    # v5.1: Updated tabs with Model Performance
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "⚾ Pitcher Analysis", 
         "🏏 Hitter Matchups", 
         "🎯 Best Bets", 
         "🔥 Heat Maps",
         "📊 Charts & Share",
-        "📈 Yesterday"
+        "📈 Yesterday",
+        "🎯 Model Accuracy"
     ])
     
     with st.spinner("🔍 Fetching games and lineups..."):
@@ -2357,8 +2454,11 @@ def main():
                     elif key in opp_baseline:
                         opp_stats[key] = opp_baseline[key]
             
-            # Try SALCI v2 with real Statcast data first
-            salci_v2_result = None
+            # ===========================================
+            # SALCI v3: K-Optimized 4-Component Model
+            # Weights: Stuff 40%, Matchup 25%, Workload 20%, Location 15%
+            # ===========================================
+            salci_v3_result = None
             stuff_score = None
             location_score = None
             matchup_score = None
@@ -2369,8 +2469,9 @@ def main():
             workload_breakdown = {}
             profile_type = "BALANCED"
             profile_desc = ""
+            salci_grade = "C"
             
-            if SALCI_V2_AVAILABLE and STATCAST_AVAILABLE:
+            if SALCI_V3_AVAILABLE and STATCAST_AVAILABLE:
                 try:
                     # Get real Statcast profile
                     statcast_profile = get_cached_statcast_profile(pid, days=30)
@@ -2384,40 +2485,50 @@ def main():
                         profile_type = statcast_profile.get('profile_type', 'BALANCED')
                         profile_desc = statcast_profile.get('profile_description', '')
                         
-                        # Workload score from pitcher stats
+                        # Workload score v3 (includes leash factor)
                         workload_stats = {
                             'P/IP': combined_stats.get('P/IP', 16.0),
                             'avg_ip': combined_stats.get('total_ip', 5.5) / max(combined_stats.get('games_sampled', 1), 1),
-                            'deep_game_pct': 0.40,  # Default - would need game logs
-                            'ttt_woba_diff': 0.0    # Default - would need splits data
+                            'avg_pitch_count': 88,  # Default - would need game logs
+                            'quick_hook_pct': 0.25,
+                            'ttt_k_drop': 0.03
                         }
-                        workload_score, workload_breakdown = calculate_workload_score(workload_stats)
+                        workload_score, workload_breakdown = calculate_workload_score_v3(workload_stats)
                         
-                        # Matchup score from opponent stats
+                        # v3: Build lineup-level hitter stats for better matchup calculation
                         opp_lineup_info = game_lineups[opp_side]
-                        lineup_hand_info = None
-                        if opp_lineup_info.get('lineup'):
-                            same_side = sum(1 for p in opp_lineup_info['lineup'] 
-                                          if (pitcher_hand == 'R' and p.get('bat_side') == 'R') or
-                                             (pitcher_hand == 'L' and p.get('bat_side') == 'L'))
-                            lineup_hand_info = {'same_side_pct': same_side / max(len(opp_lineup_info['lineup']), 1)}
+                        lineup_hitter_stats = None
                         
-                        matchup_score, matchup_breakdown = calculate_matchup_score(
-                            opp_stats, pitcher_hand, lineup_hand_info
+                        if opp_lineup_info.get('confirmed') and opp_lineup_info.get('lineup'):
+                            lineup_hitter_stats = []
+                            for player in opp_lineup_info['lineup']:
+                                h_recent = get_hitter_recent_stats(player['id'], 7)
+                                if h_recent:
+                                    lineup_hitter_stats.append({
+                                        'name': player['name'],
+                                        'k_rate': h_recent.get('k_rate', 0.22),
+                                        'zone_contact_pct': 1 - h_recent.get('k_rate', 0.22) * 0.8,  # Estimate
+                                        'bat_side': player.get('bat_side', 'R')
+                                    })
+                        
+                        # Matchup score v3 (uses lineup-level stats when available)
+                        matchup_score, matchup_breakdown = calculate_matchup_score_v3(
+                            opp_stats, lineup_hitter_stats, pitcher_hand
                         )
                         
-                        # Calculate SALCI v2
-                        salci_v2_result = calculate_salci_v2(
+                        # Calculate SALCI v3 (K-optimized weights)
+                        salci_v3_result = calculate_salci_v3(
                             stuff_score, location_score, matchup_score, workload_score
                         )
+                        salci_grade = salci_v3_result.get('grade', 'C')
                 except Exception as e:
-                    # Fall back to v1 if v2 fails
+                    # Fall back to v1 if v3 fails
                     pass
             
-            # Fall back to v1 SALCI if v2 not available or failed
-            if salci_v2_result:
-                salci = salci_v2_result['salci']
-                breakdown = salci_v2_result['components']
+            # Fall back to v1 SALCI if v3 not available or failed
+            if salci_v3_result:
+                salci = salci_v3_result['salci']
+                breakdown = salci_v3_result['components']
             else:
                 # Use v1 calculation as fallback
                 salci, breakdown, missing = compute_salci(
@@ -2431,25 +2542,26 @@ def main():
                     
                     # Generate proxy matchup/workload scores
                     matchup_score, matchup_breakdown = calculate_matchup_score(opp_stats, pitcher_hand) if opp_stats else (50, {})
-                    workload_stats = {'P/IP': combined_stats.get('P/IP', 16.0), 'avg_ip': 5.5, 'deep_game_pct': 0.40, 'ttt_woba_diff': 0}
+                    workload_stats = {'P/IP': combined_stats.get('P/IP', 16.0), 'avg_ip': 5.5, 'avg_pitch_count': 88, 'quick_hook_pct': 0.25, 'ttt_k_drop': 0.03}
                     workload_score, workload_breakdown = calculate_workload_score(workload_stats)
             
             if salci is not None:
                 base_k9 = (p_baseline or p_recent or {}).get("K9", 9.0)
                 pitcher_k_pct = (p_baseline or p_recent or {}).get("K_percent", 0.22)
                 
-                # Calculate expected Ks using SALCI v2 method
-                if salci_v2_result:
+                # Calculate expected Ks using SALCI v3 method
+                if salci_v3_result:
                     avg_ip = combined_stats.get('total_ip', 5.5) / max(combined_stats.get('games_sampled', 1), 1)
-                    efficiency = 1.0 - (combined_stats.get('P/IP', 16) - 15) * 0.05  # Penalty for high P/IP
+                    efficiency = 1.0 - (combined_stats.get('P/IP', 16) - 15) * 0.05
                     efficiency = max(0.8, min(1.1, efficiency))
                     
-                    k_projection = calculate_expected_ks(salci, avg_ip, efficiency)
+                    k_projection = calculate_expected_ks_v3(salci_v3_result, avg_ip, efficiency)
                     proj = {
                         'expected': k_projection['expected_ks'],
                         'lines': k_projection['lines'],
                         'k_per_ip': k_projection['k_per_ip'],
-                        'projected_ip': k_projection['projected_ip']
+                        'projected_ip': k_projection['projected_ip'],
+                        'best_line': k_projection.get('best_line', 5)
                     }
                 else:
                     proj = project_lines(salci, base_k9)
@@ -2466,11 +2578,13 @@ def main():
                     "opponent_id": opp_id,
                     "game_pk": game_pk,
                     "salci": salci,
+                    "salci_grade": salci_grade,
                     "expected": proj["expected"],
                     "lines": proj.get("lines", {}),
+                    "best_line": proj.get("best_line", 5),
                     "breakdown": breakdown,
                     "lineup_confirmed": opp_lineup_info["confirmed"],
-                    # v5.0 SALCI v2 Components
+                    # v5.1 SALCI v3 Components
                     "stuff_score": stuff_score,
                     "location_score": location_score,
                     "matchup_score": matchup_score,
@@ -2481,9 +2595,10 @@ def main():
                     "workload_breakdown": workload_breakdown,
                     "profile_type": profile_type,
                     "profile_desc": profile_desc,
-                    "is_statcast": salci_v2_result is not None,
+                    "is_statcast": salci_v3_result is not None,
                     "k_per_ip": proj.get("k_per_ip"),
                     "projected_ip": proj.get("projected_ip"),
+                    "matchup_source": matchup_breakdown.get('source', 'team'),
                 })
             
             # Hitter stats - ONLY from confirmed lineups
@@ -2524,7 +2639,7 @@ def main():
     
     # Tab 1: Pitcher Analysis
     with tab1:
-        st.markdown("### 🎯 Pitcher Strikeout Predictions")
+        st.markdown("### 🎯 Pitcher Strikeout Predictions (SALCI v3)")
         
         filtered_pitchers = [p for p in all_pitcher_results if p["salci"] >= min_salci]
         
@@ -2535,25 +2650,101 @@ def main():
             with col1:
                 st.metric("Total Pitchers", len(filtered_pitchers))
             with col2:
-                elite = len([p for p in filtered_pitchers if p["salci"] >= 75])
-                st.metric("🔥 Elite", elite)
+                elite = len([p for p in filtered_pitchers if p["salci"] >= 70])
+                st.metric("🔥 Elite (A)", elite)
             with col3:
-                strong = len([p for p in filtered_pitchers if 60 <= p["salci"] < 75])
-                st.metric("✅ Strong", strong)
+                strong = len([p for p in filtered_pitchers if 60 <= p["salci"] < 70])
+                st.metric("✅ Strong (B)", strong)
             with col4:
                 confirmed = len([p for p in filtered_pitchers if p.get("lineup_confirmed")])
                 st.metric("📋 Lineups Confirmed", confirmed)
             
             st.markdown("---")
             
-            for result in filtered_pitchers:
-                if result.get("lineup_confirmed"):
-                    st.markdown(f"<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>", 
-                               unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>", 
-                               unsafe_allow_html=True)
-                render_pitcher_card(result)
+            # View toggle: Cards vs Table
+            view_mode = st.radio(
+                "View Mode",
+                ["📊 Component Table", "🎴 Pitcher Cards"],
+                horizontal=True,
+                index=0
+            )
+            
+            st.markdown("")
+            
+            if view_mode == "📊 Component Table":
+                # ===========================================
+                # SORTABLE TABLE VIEW (Option C)
+                # ===========================================
+                st.markdown("#### All Pitchers - SALCI v3 Components")
+                st.caption("Click column headers to sort. Stuff (40%), Matchup (25%), Workload (20%), Location (15%)")
+                
+                # Build DataFrame with component grades
+                def get_grade_emoji(score, is_100_scale=True):
+                    if is_100_scale:
+                        if score >= 115: return "A+"
+                        if score >= 110: return "A"
+                        if score >= 105: return "B+"
+                        if score >= 100: return "B"
+                        if score >= 95: return "C+"
+                        if score >= 90: return "C"
+                        return "D"
+                    else:
+                        if score >= 70: return "A"
+                        if score >= 60: return "B"
+                        if score >= 50: return "C"
+                        if score >= 40: return "D"
+                        return "F"
+                
+                df_pitchers = pd.DataFrame([{
+                    "Pitcher": f"{p['pitcher']} ({p.get('pitcher_hand', 'R')})",
+                    "Team": p["team"],
+                    "vs": p["opponent"],
+                    "SALCI": p["salci"],
+                    "Grade": p.get("salci_grade", "C"),
+                    "Stuff": f"{int(p.get('stuff_score', 100))} ({get_grade_emoji(p.get('stuff_score', 100), True)})" if p.get('stuff_score') else "-",
+                    "Match": f"{int(p.get('matchup_score', 50))} ({get_grade_emoji(p.get('matchup_score', 50), False)})" if p.get('matchup_score') else "-",
+                    "Work": f"{int(p.get('workload_score', 50))} ({get_grade_emoji(p.get('workload_score', 50), False)})" if p.get('workload_score') else "-",
+                    "Loc": f"{int(p.get('location_score', 100))} ({get_grade_emoji(p.get('location_score', 100), True)})" if p.get('location_score') else "-",
+                    "Exp K": p["expected"],
+                    "Best": f"{p.get('best_line', 5)}+",
+                    "5+": f"{p['lines'].get(5, '-')}%",
+                    "6+": f"{p['lines'].get(6, '-')}%",
+                    "7+": f"{p['lines'].get(7, '-')}%",
+                    "8+": f"{p['lines'].get(8, '-')}%",
+                    "Profile": p.get("profile_type", "-"),
+                    "Source": "🎯" if p.get("is_statcast") else "📊",
+                    "✓": "✅" if p.get("lineup_confirmed") else "⏳",
+                } for p in filtered_pitchers])
+                
+                # Display with styling
+                st.dataframe(
+                    df_pitchers,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "SALCI": st.column_config.NumberColumn(format="%.1f"),
+                        "Exp K": st.column_config.NumberColumn(format="%.1f"),
+                        "Source": st.column_config.TextColumn(help="🎯 = Statcast, 📊 = Proxy"),
+                        "✓": st.column_config.TextColumn(help="✅ = Lineup Confirmed"),
+                    }
+                )
+                
+                st.markdown("---")
+                st.caption("**SALCI v3 Weights:** Stuff (40%) • Matchup (25%) • Workload (20%) • Location (15%)")
+                st.caption("**Source:** 🎯 = Real Statcast physics data | 📊 = Proxy metrics from MLB Stats API")
+                
+            else:
+                # ===========================================
+                # CARD VIEW (Enhanced with Component Matrix)
+                # ===========================================
+                for result in filtered_pitchers:
+                    if result.get("lineup_confirmed"):
+                        st.markdown(f"<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>", 
+                                   unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>", 
+                                   unsafe_allow_html=True)
+                    render_pitcher_card(result)
     
     # Tab 2: Hitter Matchups
     with tab2:
@@ -3305,16 +3496,373 @@ def main():
                 "team": p["team"],
                 "opponent": p["opponent"],
                 "salci": p["salci"],
+                "salci_grade": p.get("salci_grade", "C"),
                 "expected": p["expected"],
+                "best_line": p.get("best_line", 5),
                 "lines": p["lines"],
                 "stuff_score": p.get("stuff_score"),
-                "location_score": p.get("location_score")
+                "location_score": p.get("location_score"),
+                "matchup_score": p.get("matchup_score"),
+                "workload_score": p.get("workload_score"),
+                "is_statcast": p.get("is_statcast", False),
+                "profile_type": p.get("profile_type")
             } for p in all_pitcher_results]
             
             if save_predictions(date_str, predictions_to_save):
                 st.success(f"✅ Saved {len(predictions_to_save)} pitcher predictions for {date_str}")
             else:
                 st.error("Failed to save predictions")
+    
+    # ===========================================
+    # Tab 7: Model Accuracy Dashboard
+    # ===========================================
+    with tab7:
+        st.markdown("### 🎯 SALCI Model Accuracy Dashboard")
+        st.markdown("*Track how well SALCI v3 predictions match actual results over time.*")
+        st.markdown("---")
+        
+        # Load historical data
+        accuracy_data = load_accuracy_history()
+        
+        if not accuracy_data or len(accuracy_data) < 1:
+            st.info("""
+            📊 **No historical accuracy data yet.**
+            
+            To build your accuracy dashboard:
+            1. Use SALCI to make predictions before games
+            2. Click "Save Current Predictions" before games start
+            3. The system automatically tracks accuracy when results come in
+            
+            *After a few days of saved predictions, you'll see rolling accuracy metrics here.*
+            """)
+            
+            # Show how to interpret future metrics
+            with st.expander("📖 How Accuracy Is Measured"):
+                st.markdown("""
+                **Key Metrics:**
+                
+                | Metric | What It Measures | Target |
+                |--------|-----------------|--------|
+                | **K-Line Hit Rate** | % of best-line recommendations that hit | > 55% |
+                | **MAE (Mean Absolute Error)** | Avg difference between predicted and actual Ks | < 2.0 |
+                | **Grade Accuracy** | % of A/B grades that outperform C/D/F | > 65% |
+                | **Over/Under Bias** | Does model tend to over or under predict? | Near 0 |
+                
+                **By SALCI Grade:**
+                - **Grade A (70+)**: Should hit 6+ Ks at 70%+ rate
+                - **Grade B (60-69)**: Should hit 5+ Ks at 65%+ rate
+                - **Grade C (50-59)**: Should hit 5+ Ks at 50%+ rate
+                - **Grade D/F (<50)**: Fade candidates
+                
+                **Rolling Windows:**
+                - 7-day: Recent performance (captures hot/cold streaks)
+                - 30-day: Reliable baseline (statistical significance)
+                """)
+        else:
+            # Calculate rolling accuracy metrics
+            rolling_7d = calculate_rolling_accuracy(accuracy_data, days=7)
+            rolling_30d = calculate_rolling_accuracy(accuracy_data, days=30)
+            all_time = calculate_rolling_accuracy(accuracy_data, days=365)
+            
+            # Summary metrics row
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "7-Day K-Line Hit %",
+                    f"{rolling_7d['line_hit_pct']:.1f}%",
+                    delta=f"{rolling_7d['line_hit_pct'] - rolling_30d['line_hit_pct']:.1f}%" if rolling_30d['sample_size'] > 0 else None
+                )
+            with col2:
+                st.metric(
+                    "30-Day K-Line Hit %",
+                    f"{rolling_30d['line_hit_pct']:.1f}%",
+                    delta=None
+                )
+            with col3:
+                st.metric(
+                    "MAE (Avg K Miss)",
+                    f"{rolling_30d['mae']:.2f}",
+                    delta=f"{rolling_7d['mae'] - rolling_30d['mae']:.2f}" if rolling_30d['sample_size'] > 0 else None,
+                    delta_color="inverse"
+                )
+            with col4:
+                bias = rolling_30d['avg_diff']
+                bias_label = "Over" if bias > 0 else "Under"
+                st.metric(
+                    "Prediction Bias",
+                    f"{bias_label} {abs(bias):.1f}",
+                    delta=None
+                )
+            
+            st.markdown("---")
+            
+            # Performance by Grade
+            st.markdown("#### 📊 Performance by SALCI Grade")
+            
+            grade_perf = calculate_accuracy_by_grade(accuracy_data, days=30)
+            
+            if grade_perf:
+                grade_cols = st.columns(5)
+                grades = ['A', 'B', 'C', 'D', 'F']
+                
+                for i, grade in enumerate(grades):
+                    with grade_cols[i]:
+                        data = grade_perf.get(grade, {'hit_pct': 0, 'avg_ks': 0, 'count': 0})
+                        if data['count'] > 0:
+                            color = "#22c55e" if data['hit_pct'] >= 55 else "#eab308" if data['hit_pct'] >= 45 else "#ef4444"
+                            st.markdown(f"""
+                            <div style='text-align: center; background: rgba(0,0,0,0.03); padding: 1rem; border-radius: 8px;'>
+                                <div style='font-size: 1.5rem; font-weight: bold;'>Grade {grade}</div>
+                                <div style='font-size: 2rem; font-weight: bold; color: {color};'>{data['hit_pct']:.0f}%</div>
+                                <div style='font-size: 0.8rem; color: #666;'>K-Line Hit Rate</div>
+                                <div style='font-size: 0.9rem; margin-top: 0.5rem;'>Avg: {data['avg_ks']:.1f} Ks</div>
+                                <div style='font-size: 0.75rem; color: #888;'>n={data['count']}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div style='text-align: center; background: rgba(0,0,0,0.03); padding: 1rem; border-radius: 8px;'>
+                                <div style='font-size: 1.5rem; font-weight: bold;'>Grade {grade}</div>
+                                <div style='font-size: 1.2rem; color: #aaa;'>No data</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+            
+            st.markdown("---")
+            
+            # Performance by Profile Type
+            st.markdown("#### ⚡ Performance by Pitcher Profile")
+            
+            profile_perf = calculate_accuracy_by_profile(accuracy_data, days=30)
+            
+            if profile_perf:
+                df_profile = pd.DataFrame([{
+                    "Profile": profile,
+                    "K-Line Hit %": f"{data['hit_pct']:.1f}%",
+                    "Avg Ks": f"{data['avg_ks']:.1f}",
+                    "MAE": f"{data['mae']:.2f}",
+                    "Count": data['count']
+                } for profile, data in profile_perf.items() if data['count'] >= 3])
+                
+                if not df_profile.empty:
+                    df_profile = df_profile.sort_values("Count", ascending=False)
+                    st.dataframe(df_profile, use_container_width=True, hide_index=True)
+            
+            st.markdown("---")
+            
+            # Recent Predictions Table
+            st.markdown("#### 📋 Recent Predictions vs Actuals")
+            
+            recent_results = get_recent_prediction_results(accuracy_data, limit=20)
+            
+            if recent_results:
+                df_recent = pd.DataFrame([{
+                    "Date": r['date'],
+                    "Pitcher": r['pitcher'],
+                    "SALCI": r['salci'],
+                    "Grade": r['grade'],
+                    "Pred K": r['predicted'],
+                    "Actual K": r['actual'],
+                    "Diff": r['actual'] - r['predicted'],
+                    "Line": f"{r['best_line']}+",
+                    "Hit?": "✅" if r['line_hit'] else "❌"
+                } for r in recent_results])
+                
+                st.dataframe(
+                    df_recent,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "SALCI": st.column_config.NumberColumn(format="%.1f"),
+                        "Pred K": st.column_config.NumberColumn(format="%.1f"),
+                        "Diff": st.column_config.NumberColumn(format="%+.1f"),
+                    }
+                )
+            
+            st.markdown("---")
+            
+            # Accuracy trend chart
+            st.markdown("#### 📈 7-Day Rolling Accuracy Trend")
+            
+            trend_data = calculate_accuracy_trend(accuracy_data, window=7)
+            
+            if trend_data and len(trend_data) >= 3:
+                df_trend = pd.DataFrame(trend_data)
+                st.line_chart(df_trend.set_index('date')[['hit_pct', 'mae']])
+            else:
+                st.info("Need at least 3 days of data to show trend chart.")
+
+
+# ===========================================
+# ACCURACY TRACKING FUNCTIONS
+# ===========================================
+
+def load_accuracy_history() -> List[Dict]:
+    """Load all historical prediction vs actual data."""
+    data_dir = "salci_data"
+    if not os.path.exists(data_dir):
+        return []
+    
+    all_results = []
+    
+    # Get all prediction files
+    for filename in os.listdir(data_dir):
+        if filename.startswith("predictions_") and filename.endswith(".json"):
+            date_str = filename.replace("predictions_", "").replace(".json", "")
+            
+            try:
+                # Load predictions
+                with open(os.path.join(data_dir, filename), 'r') as f:
+                    predictions = json.load(f)
+                
+                # Try to load actuals
+                actuals_file = os.path.join(data_dir, f"actuals_{date_str}.json")
+                if os.path.exists(actuals_file):
+                    with open(actuals_file, 'r') as f:
+                        actuals = json.load(f)
+                else:
+                    # Try to fetch actuals
+                    actuals = get_yesterday_box_scores(date_str)
+                    if actuals:
+                        with open(actuals_file, 'w') as f:
+                            json.dump(actuals, f)
+                
+                if actuals:
+                    # Match predictions to actuals
+                    for pred in predictions:
+                        for actual in actuals:
+                            if pred['pitcher'].lower() == actual['pitcher_name'].lower() or \
+                               pred['pitcher'].split()[-1].lower() == actual['pitcher_name'].split()[-1].lower():
+                                all_results.append({
+                                    'date': date_str,
+                                    'pitcher': pred['pitcher'],
+                                    'team': pred['team'],
+                                    'salci': pred['salci'],
+                                    'grade': pred.get('salci_grade', get_grade_from_salci(pred['salci'])),
+                                    'predicted': pred['expected'],
+                                    'actual': actual['actual_k'],
+                                    'best_line': pred.get('best_line', 5),
+                                    'line_hit': actual['actual_k'] >= pred.get('best_line', 5),
+                                    'is_statcast': pred.get('is_statcast', False),
+                                    'profile_type': pred.get('profile_type', 'UNKNOWN'),
+                                    'stuff_score': pred.get('stuff_score'),
+                                    'matchup_score': pred.get('matchup_score'),
+                                })
+                                break
+            except Exception as e:
+                continue
+    
+    return sorted(all_results, key=lambda x: x['date'], reverse=True)
+
+
+def get_grade_from_salci(salci: float) -> str:
+    """Convert SALCI score to letter grade."""
+    if salci >= 70: return 'A'
+    if salci >= 60: return 'B'
+    if salci >= 50: return 'C'
+    if salci >= 40: return 'D'
+    return 'F'
+
+
+def calculate_rolling_accuracy(data: List[Dict], days: int = 7) -> Dict:
+    """Calculate rolling accuracy metrics."""
+    if not data:
+        return {'line_hit_pct': 0, 'mae': 0, 'avg_diff': 0, 'sample_size': 0}
+    
+    cutoff = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+    recent = [d for d in data if d['date'] >= cutoff]
+    
+    if not recent:
+        return {'line_hit_pct': 0, 'mae': 0, 'avg_diff': 0, 'sample_size': 0}
+    
+    line_hits = sum(1 for d in recent if d['line_hit'])
+    mae = sum(abs(d['predicted'] - d['actual']) for d in recent) / len(recent)
+    avg_diff = sum(d['predicted'] - d['actual'] for d in recent) / len(recent)
+    
+    return {
+        'line_hit_pct': (line_hits / len(recent)) * 100,
+        'mae': mae,
+        'avg_diff': avg_diff,
+        'sample_size': len(recent)
+    }
+
+
+def calculate_accuracy_by_grade(data: List[Dict], days: int = 30) -> Dict:
+    """Calculate accuracy broken down by SALCI grade."""
+    cutoff = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+    recent = [d for d in data if d['date'] >= cutoff]
+    
+    results = {}
+    for grade in ['A', 'B', 'C', 'D', 'F']:
+        grade_data = [d for d in recent if d['grade'] == grade]
+        if grade_data:
+            line_hits = sum(1 for d in grade_data if d['line_hit'])
+            results[grade] = {
+                'hit_pct': (line_hits / len(grade_data)) * 100,
+                'avg_ks': sum(d['actual'] for d in grade_data) / len(grade_data),
+                'mae': sum(abs(d['predicted'] - d['actual']) for d in grade_data) / len(grade_data),
+                'count': len(grade_data)
+            }
+        else:
+            results[grade] = {'hit_pct': 0, 'avg_ks': 0, 'mae': 0, 'count': 0}
+    
+    return results
+
+
+def calculate_accuracy_by_profile(data: List[Dict], days: int = 30) -> Dict:
+    """Calculate accuracy broken down by pitcher profile type."""
+    cutoff = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+    recent = [d for d in data if d['date'] >= cutoff]
+    
+    results = {}
+    profiles = set(d.get('profile_type', 'UNKNOWN') for d in recent)
+    
+    for profile in profiles:
+        profile_data = [d for d in recent if d.get('profile_type') == profile]
+        if profile_data:
+            line_hits = sum(1 for d in profile_data if d['line_hit'])
+            results[profile] = {
+                'hit_pct': (line_hits / len(profile_data)) * 100,
+                'avg_ks': sum(d['actual'] for d in profile_data) / len(profile_data),
+                'mae': sum(abs(d['predicted'] - d['actual']) for d in profile_data) / len(profile_data),
+                'count': len(profile_data)
+            }
+    
+    return results
+
+
+def get_recent_prediction_results(data: List[Dict], limit: int = 20) -> List[Dict]:
+    """Get recent prediction results for display."""
+    return data[:limit]
+
+
+def calculate_accuracy_trend(data: List[Dict], window: int = 7) -> List[Dict]:
+    """Calculate daily accuracy trend for charting."""
+    if not data:
+        return []
+    
+    # Group by date
+    by_date = {}
+    for d in data:
+        date = d['date']
+        if date not in by_date:
+            by_date[date] = []
+        by_date[date].append(d)
+    
+    # Calculate daily metrics
+    trend = []
+    for date in sorted(by_date.keys()):
+        day_data = by_date[date]
+        if day_data:
+            line_hits = sum(1 for d in day_data if d['line_hit'])
+            trend.append({
+                'date': date,
+                'hit_pct': (line_hits / len(day_data)) * 100,
+                'mae': sum(abs(d['predicted'] - d['actual']) for d in day_data) / len(day_data),
+                'count': len(day_data)
+            })
+    
+    return trend[-30:]  # Last 30 days
 
 
 if __name__ == "__main__":
