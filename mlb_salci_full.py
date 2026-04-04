@@ -3122,6 +3122,20 @@ def main():
         # ===== GAME DAY CARD - Featured at top =====
         st.markdown("#### 📱 Game Day Card")
         st.markdown("*Perfect for your morning tweet! Screenshot and share.*")
+
+        # UPDATE: Only show pitchers from confirmed lineups
+        confirmed_pitchers = [p for p in all_pitcher_results if p.get("lineup_confirmed", False)]
+        
+        if not confirmed_pitchers:
+            st.warning("⚠️ No confirmed lineups available yet. Pitcher scores and cards will appear once lineups are released.")
+        else:
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                # Selection now only pulls from the 'confirmed_pitchers' list
+                share_pitcher_name = st.selectbox(
+                    "Select Confirmed Pitcher for Card", 
+                    options=[f"{p['pitcher']} ({p['team']})" for p in confirmed_pitchers]
+                )
         
         # Calculate stats for the card
         top_pitcher = all_pitcher_results[0] if all_pitcher_results else None
@@ -3153,6 +3167,9 @@ def main():
             h_vs_hand = top_hitter.get('pitcher_hand', 'R') if top_hitter else 'R'
             
             tweet_text = f"""🚨 SALCI Game Day - {selected_date.strftime('%b %d')} 🚨
+
+
+            
 
 🎯 Top K Play: {top_pitcher['pitcher']} ({p_hand}HP)
 • SALCI: {top_pitcher['salci']}
