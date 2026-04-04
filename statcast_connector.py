@@ -44,8 +44,6 @@ try:
     PYBASEBALL_AVAILABLE = True
 except ImportError:
     PYBASEBALL_AVAILABLE = False
-    print("Warning: pybaseball not installed. Run: pip install pybaseball")
-
 
 # =============================================================================
 # SALCI v3 WEIGHTS
@@ -766,6 +764,59 @@ def calculate_salci_v3(
     }
 
 
+def calculate_volatility_buffer(stuff_plus: float, location_plus: float) -> float:
+    """
+    Calculates the 'Risk Factor' of a pitcher. 
+    High Stuff + Low Location = Volatile (High ceiling, dangerous floor).
+    """
+    base_vol = 1.1 # Standard K variance
+    
+    # Delta Penalty: If Stuff is 20+ pts higher than Location, volatility increases
+    delta = stuff_plus - location_plus
+    if delta > 15:
+        base_vol += (delta - 15) / 10 * 0.4
+        
+    # Location Floor: Poor command adds consistent volatility
+    if location_plus < 90:
+        base_vol += (90 - location_plus) / 10 * 0.3
+        
+    return round(base_vol, 2)
+
+def calculate_expected_ks_v3(salci_result: Dict, projected_ip: float = 5.5, efficiency_factor: float = 1.0) -> Dict:
+    """
+    v5.2 Evolution: Calculates the 'Floor' (At Least X Ks) and Confidence.
+    """
+    salci = salci_result.get('salci', 50)
+    # Extract components for volatility calculation
+    components = salci_result.get('components', {})
+    stuff = components.get('stuff', {}).get('raw', 100)
+    location = components.get('location', {}).get('raw', 100)
+    
+    # 1. Mean Projection
+    mean_ks = (salci / 10) * (projected_ip / 5.5) * efficiency_factor
+    
+    # 2. Calculate Volatility & Floor
+    vol = calculate_volatility_buffer(stuff, location)
+    floor = max(0, mean_ks - vol)
+    
+    # 3. Confidence Score (0-100)
+    # Higher confidence for high Location+ and low volatility
+    base_conf = 72
+    loc_bonus = (location - 100) * 0.6
+    vol_penalty = (vol - 1.1) * 12
+    confidence = max(35, min(98, base_conf + loc_bonus - vol_penalty))
+    
+    return {
+        "expected": round(mean_ks, 1),
+        "floor": int(np.floor(floor)), # The "At Least" number
+        "confidence": int(confidence),
+        "volatility": vol,
+        "grade": salci_result.get('grade', 'C')
+    }
+
+
+
+
 def get_component_grade(score: float, is_100_scale: bool = True) -> str:
     """Convert score to letter grade."""
     if is_100_scale:
@@ -1203,54 +1254,3 @@ if __name__ == "__main__":
     else:
         print("\n✅ pybaseball is available!")
 
-
-# The change up a bit....
-
-def calculate_volatility_buffer(stuff_plus: float, location_plus: float) -> float:
-    """
-    Calculates a volatility buffer based on the variance between Stuff and Location.
-    Higher variance (e.g., high stuff, low location) increases volatility.
-    """
-    # Baseline volatility is 1.0 K
-    base_buffer = 1.0
-    
-    # Stuff/Location Delta penalty
-    # If a pitcher has 120 Stuff but 90 Location, they are volatile (high ceiling, low floor)
-    delta = abs(stuff_plus - location_plus)
-    delta_penalty = (delta / 20) * 0.5 # Every 20 points of delta adds 0.5 to volatility
-    
-    # Low location penalty (wild pitchers have lower floors)
-    location_penalty = max(0, (100 - location_plus) / 10) * 0.3
-    
-    return round(base_buffer + delta_penalty + location_penalty, 2)
-
-def calculate_expected_ks_v3(salci_result: Dict, projected_ip: float = 5.5, efficiency_factor: float = 1.0) -> Dict:
-    """
-    v3 Evolution: Calculates mean expectation, conservative floor, and confidence score.
-    """
-    salci_score = salci_result.get('salci', 50)
-    stuff_plus = salci_result.get('components', {}).get('stuff', {}).get('raw', 100)
-    location_plus = salci_result.get('components', {}).get('location', {}).get('raw', 100)
-    
-    # 1. Calculate Mean Expected Ks
-    # Base formula: (SALCI / 10) * (IP / 6) * efficiency
-    mean_ks = (salci_score / 10) * (projected_ip / 5.5) * efficiency_factor
-    
-    # 2. Calculate Volatility & Floor
-    volatility = calculate_volatility_buffer(stuff_plus, location_plus)
-    floor_ks = max(0, mean_ks - volatility)
-    
-    # 3. Confidence Score (0-100)
-    # Higher confidence comes from high Location+ and consistency
-    base_conf = 70
-    loc_bonus = (location_plus - 100) * 0.5
-    vol_penalty = volatility * 10
-    confidence_score = max(30, min(98, base_conf + loc_bonus - vol_penalty))
-    
-    return {
-        'expected_ks': round(mean_ks, 1),
-        'floor_ks': int(floor_ks), # "At Least X Ks"
-        'volatility': round(volatility, 2),
-        'confidence_score': int(confidence_score),
-        'grade': salci_result.get('grade', 'C')
-    }
