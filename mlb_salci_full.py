@@ -3165,52 +3165,52 @@ def main():
     
     # Tab 5: Charts & Share (was tab4)
     with tab5:
-    st.markdown("### 📊 Shareable Charts & Insights")
-    st.markdown("*Screenshot these charts for Twitter/X posts! All include #SALCI branding.*")
-    
-    st.markdown("---")
-    
-    # ===== GAME DAY CARD - Featured at top =====
-    st.markdown("#### 📱 Game Day Card")
-    st.markdown("*Perfect for your morning tweet! Screenshot and share.*")
-
-    # ===== CRITICAL FIX #1: FILTER TO CONFIRMED LINEUPS ONLY =====
-    confirmed_pitchers = [p for p in all_pitcher_results if p.get("lineup_confirmed", False)]
-    confirmed_hitters = [h for h in all_hitter_results if h.get("lineup_confirmed", False)]
-    
-    if not confirmed_pitchers:
-        st.warning("⚠️ No confirmed lineups available yet. Pitcher scores and cards will appear once lineups are released (usually 1-2 hours before game time).")
-        st.info("💡 Tip: Click 'Refresh Lineups' in the sidebar to check for updates.")
-    else:
-        st.success(f"✅ Using {len(confirmed_pitchers)} pitchers with confirmed opponent lineups")
+        st.markdown("### 📊 Shareable Charts & Insights")
+        st.markdown("*Screenshot these charts for Twitter/X posts! All include #SALCI branding.*")
         
-        col_sel1, col_sel2 = st.columns(2)
-        with col_sel1:
-            # Selection now only pulls from the confirmed_pitchers list
-            share_pitcher_name = st.selectbox(
-                "Select Confirmed Pitcher for Card", 
-                options=[f"{p['pitcher']} ({p['team']})" for p in confirmed_pitchers]
-            )
+        st.markdown("---")
+        
+        # ===== GAME DAY CARD - Featured at top =====
+        st.markdown("#### 📱 Game Day Card")
+        st.markdown("*Perfect for your morning tweet! Screenshot and share.*")
     
-    # Calculate stats for the card - use only confirmed data
-    top_pitcher = confirmed_pitchers[0] if confirmed_pitchers else None
-    top_hitter = confirmed_hitters[0] if confirmed_hitters else None
-    elite_count = len([p for p in confirmed_pitchers if p["salci"] >= 75])
-    strong_count = len([p for p in confirmed_pitchers if 60 <= p["salci"] < 75])
-    hot_hitters_count = len([h for h in confirmed_hitters if h.get("score", 0) >= 70])
-    lineups_confirmed = len(confirmed_pitchers) > 0
-    
-    # Render the Game Day Card
-    create_game_day_card(
-        selected_date=selected_date,
-        num_games=len(games),
-        top_pitcher=top_pitcher,
-        top_hitter=top_hitter,
-        elite_count=elite_count,
-        strong_count=strong_count,
-        hot_hitters_count=hot_hitters_count,
-        lineups_confirmed=lineups_confirmed
-    )
+        # ===== CRITICAL FIX #1: FILTER TO CONFIRMED LINEUPS ONLY =====
+        confirmed_pitchers = [p for p in all_pitcher_results if p.get("lineup_confirmed", False)]
+        confirmed_hitters = [h for h in all_hitter_results if h.get("lineup_confirmed", False)]
+        
+        if not confirmed_pitchers:
+            st.warning("⚠️ No confirmed lineups available yet. Pitcher scores and cards will appear once lineups are released (usually 1-2 hours before game time).")
+            st.info("💡 Tip: Click 'Refresh Lineups' in the sidebar to check for updates.")
+        else:
+            st.success(f"✅ Using {len(confirmed_pitchers)} pitchers with confirmed opponent lineups")
+            
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                # Selection now only pulls from the confirmed_pitchers list
+                share_pitcher_name = st.selectbox(
+                    "Select Confirmed Pitcher for Card", 
+                    options=[f"{p['pitcher']} ({p['team']})" for p in confirmed_pitchers]
+                )
+        
+        # Calculate stats for the card - use only confirmed data
+        top_pitcher = confirmed_pitchers[0] if confirmed_pitchers else None
+        top_hitter = confirmed_hitters[0] if confirmed_hitters else None
+        elite_count = len([p for p in confirmed_pitchers if p["salci"] >= 75])
+        strong_count = len([p for p in confirmed_pitchers if 60 <= p["salci"] < 75])
+        hot_hitters_count = len([h for h in confirmed_hitters if h.get("score", 0) >= 70])
+        lineups_confirmed = len(confirmed_pitchers) > 0
+        
+        # Render the Game Day Card
+        create_game_day_card(
+            selected_date=selected_date,
+            num_games=len(games),
+            top_pitcher=top_pitcher,
+            top_hitter=top_hitter,
+            elite_count=elite_count,
+            strong_count=strong_count,
+            hot_hitters_count=hot_hitters_count,
+            lineups_confirmed=lineups_confirmed
+        )
     
     # Sample tweet for copy/paste
     if top_pitcher:
