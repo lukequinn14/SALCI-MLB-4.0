@@ -969,6 +969,124 @@ def get_pitcher_statcast_profile(
         return None
 
 
+def calculate_strikeout_floor_v3(
+    salci_result: Dict,
+    stuff_plus: float,
+    location_plus: float,
+    projected_ip: float = 5.5,
+    efficiency_factor: float = 1.0
+) -> Dict:
+    """
+    Calculate the "At Least X Ks" floor for SALCI predictions.
+    
+    The Floor = the conservative Ks estimate we're CONFIDENT will happen
+    The Ceiling = the upside scenario
+    The Probability = how often pitcher hits the Floor
+    
+    Key Insight:
+    - High Stuff + Low Location = High volatility (wider floor/ceiling gap)
+    - High Stuff + High Location = Low volatility (tighter range, more reliable)
+    
+    Returns:
+        Dict with floor, mean, ceiling, and confidence
+    """
+    salci = salci_result.get('salci', 50)
+    
+    # 1. Calculate Mean Expected Ks
+    # (This is what we already do)
+    k_per_ip = (salci / 50) * 1.0  # SALCI 50 = 1.0 K/IP
+    k_per_ip = max(0.5, min(2.0, k_per_ip))
+    mean_ks = k_per_ip * projected_ip * efficiency_factor
+    
+    # 2. Calculate Volatility (Standard Deviation)
+    # Based on Stuff vs Location gap (the "profile mismatch")
+    if stuff_plus and location_plus:
+        # Gap measures variance
+        # High Stuff + Low Location = Volatile pitcher
+        # Balanced pitcher = Consistent
+        gap = stuff_plus - location_plus
+        
+        # Base volatility (StdDev in K count)
+        if gap > 20:  # Stuff-dominant (e.g., 120 Stuff, 95 Loc)
+            volatility = 1.8  # High variance (±1.8 Ks)
+        elif gap > 10:  # Stuff-first (e.g., 115 Stuff, 100 Loc)
+            volatility = 1.4
+        elif gap > -10:  # Balanced (e.g., 105 Stuff, 105 Loc)
+            volatility = 1.0  # Standard variance
+        elif gap < -10:  # Location-dominant (e.g., 95 Stuff, 115 Loc)
+            volatility = 0.8  # More predictable
+        else:
+            volatility = 1.2
+    else:
+        volatility = 1.2  # Default when no Statcast data
+    
+    # 3. Calculate Floor, Mean, Ceiling
+    # Using normal distribution approximation
+    # Floor = Mean - 1 SD (68% confidence, ~1 std dev below)
+    # Ceiling = Mean + 1 SD
+    floor = max(0, mean_ks - volatility)
+    ceiling = mean_ks + volatility
+    
+    # 4. Calculate Confidence Score (0-100)
+    # How confident are we the pitcher hits the Floor?
+    # Higher Location+ = Higher confidence
+    # Higher volatility = Lower confidence
+    base_confidence = 70  # Baseline
+    
+    # Location bonus: Good command = predictable results
+    location_bonus = (location_plus - 100) * 0.8 if location_plus else 0
+    location_bonus = max(-15, min(15, location_bonus))
+    
+    # Volatility penalty: High variance = less predictable
+    volatility_penalty = (volatility - 1.0) * 15
+    volatility_penalty = max(0, volatility_penalty)
+    
+    confidence = base_confidence + location_bonus - volatility_penalty
+    confidence = max(35, min(98, confidence))
+    
+    # 5. Determine the "Best Floor" (highest floor with >60% confidence)
+    # This is the "At Least" number we're selling
+    best_floor = int(np.floor(floor))
+    
+    return {
+        # Main outputs
+        'floor': best_floor,  # Conservative "At Least X"
+        'mean': round(mean_ks, 1),  # Expected value
+        'ceiling': round(ceiling, 1),  # Upside
+        'confidence': int(confidence),  # 0-100 confidence in Floor
+        
+        # Details for analysis
+        'volatility': round(volatility, 2),  # StdDev
+        'stuff_location_gap': round(gap, 1) if stuff_plus and location_plus else None,
+        'profile': 'Volatile' if volatility > 1.5 else 'Consistent' if volatility < 1.0 else 'Normal',
+        
+        # Hit probability by line (Poisson-style)
+        'hit_probabilities': {
+            best_floor: int(confidence),  # Confidence in hitting Floor
+            best_floor + 1: int(confidence * 0.75),  # Hitting Floor+1
+            best_floor + 2: int(confidence * 0.50),  # Hitting Floor+2
+        },
+        
+        # Validation info
+        'recommendation': _get_floor_recommendation(salci, confidence, best_floor)
+    }
+
+
+def _get_floor_recommendation(salci: float, confidence: int, floor: int) -> str:
+    """Generate a recommendation based on SALCI and confidence."""
+    if confidence < 50:
+        return "⚠️ PASS - Too much variance, unclear edge"
+    elif salci < 50:
+        return "❌ FADE - Below average SALCI + low confidence"
+    elif salci >= 70 and confidence >= 75:
+        return "🟢 STRONG PLAY - Elite SALCI + high confidence"
+    elif salci >= 60 and confidence >= 65:
+        return "🟡 MODERATE PLAY - Good SALCI, decent confidence"
+    elif confidence >= 60:
+        return "🟡 CONDITIONAL - Confidence is there, SALCI is middle"
+    else:
+        return "⚠️ WEAK PLAY - Below confidence threshold"
+
 # =============================================================================
 # HITTER FUNCTIONS
 # =============================================================================
