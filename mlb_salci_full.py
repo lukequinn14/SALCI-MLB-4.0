@@ -1947,6 +1947,7 @@ def create_daily_picks_card(top_pitcher: Dict, top_hitter: Dict) -> None:
 # UI Components
 # ----------------------------
 def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
+    """Render pitcher card with fallback for missing data."""
     rating_label, emoji, css_class = get_rating(result["salci"])
     
     with st.container():
@@ -1958,11 +1959,11 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
             st.markdown(f"**{result['team']}** vs {result['opponent']}")
             
             # v5.1: Show profile type and grade
-            if result.get("profile_type"):
+            if result.get("profile_type") and result.get("profile_type") != "BALANCED":
                 profile_emoji = {
                     "ELITE": "⚡", "STUFF-DOMINANT": "🔥", "LOCATION-DOMINANT": "🎯",
                     "BALANCED-PLUS": "💪", "BALANCED": "⚖️", "ONE-TOOL": "📊", "LIMITED": "⚠️"
-                }.get(result["profile_type"], "📊")
+                }.get(result["profile_type"], "���")
                 st.markdown(f"<span style='font-size: 0.85rem;'>{profile_emoji} {result['profile_type']}</span>", 
                            unsafe_allow_html=True)
             
@@ -1970,8 +1971,12 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
             badges = []
             if result.get("is_statcast"):
                 badges.append("<span style='font-size: 0.7rem; background: #10b981; color: white; padding: 2px 6px; border-radius: 4px;'>🎯 Statcast</span>")
+            else:
+                badges.append("<span style='font-size: 0.7rem; background: #6b7280; color: white; padding: 2px 6px; border-radius: 4px;'>📊 Stats API</span>")
+            
             if result.get("matchup_source") == "lineup":
                 badges.append("<span style='font-size: 0.7rem; background: #3b82f6; color: white; padding: 2px 6px; border-radius: 4px;'>📋 Lineup Match</span>")
+            
             if badges:
                 st.markdown(" ".join(badges), unsafe_allow_html=True)
         
@@ -1999,20 +2004,23 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                                    unsafe_allow_html=True)
         
         # v5.1: SALCI v3 4-Component Breakdown (K-Optimized Weights)
+        # FIX: Show component breakdown even if Statcast data is missing
         if show_stuff_location:
             stuff = result.get("stuff_score")
             location = result.get("location_score")
             matchup = result.get("matchup_score")
             workload = result.get("workload_score")
             
-            if stuff and location:
-                # Show 4-component bars with v3 weights
+            # Only show if we have at least some data
+            if stuff or location or matchup or workload:
                 st.markdown("<div style='margin-top: 0.5rem;'>", unsafe_allow_html=True)
                 
                 col_s, col_m, col_w, col_l = st.columns(4)  # Reordered by importance
                 
                 # Helper to get bar color based on score
                 def get_component_color(score, is_100_scale=True):
+                    if score is None:
+                        return "#d1d5db"  # Gray for missing data
                     if is_100_scale:
                         if score >= 115: return "#10b981"
                         if score >= 105: return "#22c55e"
@@ -2026,17 +2034,21 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                 
                 # Stuff (40%) - MOST IMPORTANT for Ks
                 with col_s:
-                    stuff_color = get_component_color(stuff, is_100_scale=True)
-                    stuff_pct = min(100, max(0, (stuff - 70) * 2))
-                    st.markdown(f"""
-                    <div style='text-align: center;'>
-                        <div style='font-size: 0.7rem; color: #666;'>⚡ STUFF (40%)</div>
-                        <div style='font-size: 1.2rem; font-weight: bold; color: {stuff_color};'>{int(stuff)}</div>
-                        <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
-                            <div style='width: {stuff_pct}%; background: {stuff_color}; border-radius: 4px; height: 100%;'></div>
+                    if stuff:
+                        stuff_color = get_component_color(stuff, is_100_scale=True)
+                        stuff_pct = min(100, max(0, (stuff - 70) * 2))
+                        st.markdown(f"""
+                        <div style='text-align: center;'>
+                            <div style='font-size: 0.7rem; color: #666;'>⚡ STUFF (40%)</div>
+                            <div style='font-size: 1.2rem; font-weight: bold; color: {stuff_color};'>{int(stuff)}</div>
+                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
+                                <div style='width: {stuff_pct}%; background: {stuff_color}; border-radius: 4px; height: 100%;'></div>
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>STUFF<br>--</div>", 
+                                   unsafe_allow_html=True)
                 
                 # Matchup (25%)
                 with col_m:
@@ -2074,21 +2086,26 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                 
                 # Location (15%) - Least important for Ks
                 with col_l:
-                    loc_color = get_component_color(location, is_100_scale=True)
-                    loc_pct = min(100, max(0, (location - 70) * 2))
-                    st.markdown(f"""
-                    <div style='text-align: center;'>
-                        <div style='font-size: 0.7rem; color: #666;'>📍 LOCATION (15%)</div>
-                        <div style='font-size: 1.2rem; font-weight: bold; color: {loc_color};'>{int(location)}</div>
-                        <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
-                            <div style='width: {loc_pct}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
+                    if location:
+                        loc_color = get_component_color(location, is_100_scale=True)
+                        loc_pct = min(100, max(0, (location - 70) * 2))
+                        st.markdown(f"""
+                        <div style='text-align: center;'>
+                            <div style='font-size: 0.7rem; color: #666;'>📍 LOCATION (15%)</div>
+                            <div style='font-size: 1.2rem; font-weight: bold; color: {loc_color};'>{int(location)}</div>
+                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
+                                <div style='width: {loc_pct}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>LOCATION<br>--</div>", 
+                                   unsafe_allow_html=True)
                 
                 st.markdown("</div>", unsafe_allow_html=True)
                 
                 # v5.1: Arsenal Display (pitch mix with per-pitch Stuff+)
+                # FIX: Only show arsenal if we have Statcast data
                 stuff_breakdown = result.get("stuff_breakdown", {})
                 if stuff_breakdown and result.get("is_statcast"):
                     render_arsenal_display(stuff_breakdown)
@@ -3114,49 +3131,167 @@ def main():
     
     # Tab 5: Charts & Share (was tab4)
     with tab5:
-        st.markdown("### 📊 Shareable Charts & Insights")
-        st.markdown("*Screenshot these charts for Twitter/X posts! All include #SALCI branding.*")
-        
-        st.markdown("---")
-        
-        # ===== GAME DAY CARD - Featured at top =====
-        st.markdown("#### 📱 Game Day Card")
-        st.markdown("*Perfect for your morning tweet! Screenshot and share.*")
+    st.markdown("### 📊 Shareable Charts & Insights")
+    st.markdown("*Screenshot these charts for Twitter/X posts! All include #SALCI branding.*")
+    
+    st.markdown("---")
+    
+    # ===== GAME DAY CARD - Featured at top =====
+    st.markdown("#### 📱 Game Day Card")
+    st.markdown("*Perfect for your morning tweet! Screenshot and share.*")
 
-        # UPDATE: Only show pitchers from confirmed lineups
-        confirmed_pitchers = [p for p in all_pitcher_results if p.get("lineup_confirmed", False)]
+    # ===== CRITICAL FIX #1: FILTER TO CONFIRMED LINEUPS ONLY =====
+    confirmed_pitchers = [p for p in all_pitcher_results if p.get("lineup_confirmed", False)]
+    confirmed_hitters = [h for h in all_hitter_results if h.get("lineup_confirmed", False)]
+    
+    if not confirmed_pitchers:
+        st.warning("⚠️ No confirmed lineups available yet. Pitcher scores and cards will appear once lineups are released (usually 1-2 hours before game time).")
+        st.info("💡 Tip: Click 'Refresh Lineups' in the sidebar to check for updates.")
+    else:
+        st.success(f"✅ Using {len(confirmed_pitchers)} pitchers with confirmed opponent lineups")
         
-        if not confirmed_pitchers:
-            st.warning("⚠️ No confirmed lineups available yet. Pitcher scores and cards will appear once lineups are released.")
+        col_sel1, col_sel2 = st.columns(2)
+        with col_sel1:
+            # Selection now only pulls from the confirmed_pitchers list
+            share_pitcher_name = st.selectbox(
+                "Select Confirmed Pitcher for Card", 
+                options=[f"{p['pitcher']} ({p['team']})" for p in confirmed_pitchers]
+            )
+    
+    # Calculate stats for the card - use only confirmed data
+    top_pitcher = confirmed_pitchers[0] if confirmed_pitchers else None
+    top_hitter = confirmed_hitters[0] if confirmed_hitters else None
+    elite_count = len([p for p in confirmed_pitchers if p["salci"] >= 75])
+    strong_count = len([p for p in confirmed_pitchers if 60 <= p["salci"] < 75])
+    hot_hitters_count = len([h for h in confirmed_hitters if h.get("score", 0) >= 70])
+    lineups_confirmed = len(confirmed_pitchers) > 0
+    
+    # Render the Game Day Card
+    create_game_day_card(
+        selected_date=selected_date,
+        num_games=len(games),
+        top_pitcher=top_pitcher,
+        top_hitter=top_hitter,
+        elite_count=elite_count,
+        strong_count=strong_count,
+        hot_hitters_count=hot_hitters_count,
+        lineups_confirmed=lineups_confirmed
+    )
+    
+    # Sample tweet for copy/paste
+    if top_pitcher:
+        st.markdown("---")
+        st.markdown("##### 📝 Sample Tweet (copy & paste!)")
+        p_hand = top_pitcher.get('pitcher_hand', 'R')
+        h_hand = top_hitter.get('bat_side', 'R') if top_hitter else 'R'
+        h_vs_hand = top_hitter.get('pitcher_hand', 'R') if top_hitter else 'R'
+        
+        tweet_text = f"""🚨 SALCI Game Day - {selected_date.strftime('%b %d')} 🚨
+
+🎯 Top K Play: {top_pitcher['pitcher']} ({p_hand}HP)
+• SALCI: {top_pitcher['salci']}
+• 6+ Ks: {top_pitcher['lines'].get(6, 0)}%
+• 7+ Ks: {top_pitcher['lines'].get(7, 0)}%
+
+{"🔥 Hot Bat: " + top_hitter['name'] + " (" + h_hand + "HB) vs " + h_vs_hand + "HP" + chr(10) + "• .{:03d} AVG L7".format(int(top_hitter['recent'].get('avg', 0)*1000)) if top_hitter else ""}
+
+{elite_count} Elite | {strong_count} Strong | {hot_hitters_count} Hot Bats
+
+#SALCI #MLB"""
+        
+        st.code(tweet_text, language=None)
+    
+    st.markdown("---")
+    
+    # ===== CRITICAL FIX #2: FILTER CHARTS TO CONFIRMED LINEUPS =====
+    # Charts in columns - use ONLY confirmed pitcher/hitter data
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📈 Pitcher SALCI Rankings")
+        fig_pitchers = create_pitcher_comparison_chart(confirmed_pitchers)
+        if fig_pitchers:
+            st.plotly_chart(fig_pitchers, use_container_width=True)
         else:
-            col_sel1, col_sel2 = st.columns(2)
-            with col_sel1:
-                # Selection now only pulls from the 'confirmed_pitchers' list
-                share_pitcher_name = st.selectbox(
-                    "Select Confirmed Pitcher for Card", 
-                    options=[f"{p['pitcher']} ({p['team']})" for p in confirmed_pitchers]
-                )
+            st.info("No pitcher data available (waiting for lineups)")
+    
+    with col2:
+        st.markdown("#### 🔥 Hot Hitters (L7)")
+        fig_hitters = create_hitter_hotness_chart(confirmed_hitters)
+        if fig_hitters:
+            st.plotly_chart(fig_hitters, use_container_width=True)
+        else:
+            st.info("No hitter data available (waiting for lineups)")
+    
+    st.markdown("---")
+    
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        st.markdown("#### 🎯 K Line Projections")
+        fig_k_lines = create_k_projection_chart(confirmed_pitchers)
+        if fig_k_lines:
+            st.plotly_chart(fig_k_lines, use_container_width=True)
+        else:
+            st.info("No pitcher data available (waiting for lineups)")
+    
+    with col4:
+        st.markdown("#### 🧮 SALCI Formula Breakdown")
+        fig_breakdown = create_salci_breakdown_chart()
+        st.plotly_chart(fig_breakdown, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Scatter plot full width - use confirmed hitters only
+    st.markdown("#### 📊 Hitter Profile: K% vs AVG")
+    fig_scatter = create_matchup_scatter(confirmed_hitters)
+    if fig_scatter:
+        st.plotly_chart(fig_scatter, use_container_width=True)
+    else:
+        st.info("Need at least 3 hitters with confirmed lineups for scatter plot")
+    
+    st.markdown("---")
+    
+    # v4.0: Stuff vs Location scatter plot - use confirmed pitchers only
+    st.markdown("#### ⚡ Pitcher Profiles: Stuff vs Location (v4.0)")
+    st.markdown("*Shows where pitchers fall on the Stuff (arsenal quality) vs Location (command) spectrum*")
+    fig_stuff_loc = create_stuff_location_chart(confirmed_pitchers)
+    if fig_stuff_loc:
+        st.plotly_chart(fig_stuff_loc, use_container_width=True)
+    else:
+        st.info("Need at least 3 pitchers with confirmed lineups for comparison")
+    
+    st.markdown("---")
+    
+    # Twitter tips
+    with st.expander("📱 Tips for Sharing on Twitter/X"):
+        st.markdown("""
+        **How to share these charts:**
         
-        # Calculate stats for the card
-        top_pitcher = all_pitcher_results[0] if all_pitcher_results else None
-        confirmed_hitters_list = [h for h in all_hitter_results if h.get("lineup_confirmed")]
-        top_hitter = confirmed_hitters_list[0] if confirmed_hitters_list else (all_hitter_results[0] if all_hitter_results else None)
-        elite_count = len([p for p in all_pitcher_results if p["salci"] >= 75])
-        strong_count = len([p for p in all_pitcher_results if 60 <= p["salci"] < 75])
-        hot_hitters_count = len([h for h in all_hitter_results if h.get("score", 0) >= 70])
-        lineups_confirmed = confirmed_count > 0
+        1. **Screenshot** the chart you want to share
+        2. **Crop** to focus on the visual
+        3. **Post** with hashtag #SALCI
         
-        # Render the Game Day Card
-        create_game_day_card(
-            selected_date=selected_date,
-            num_games=len(games),
-            top_pitcher=top_pitcher,
-            top_hitter=top_hitter,
-            elite_count=elite_count,
-            strong_count=strong_count,
-            hot_hitters_count=hot_hitters_count,
-            lineups_confirmed=lineups_confirmed
-        )
+        **Sample tweet templates:**
+        
+        > 🚨 Today's top SALCI pitcher: [Name] at 82 🔥
+        > 
+        > Expected: 7.2 Ks | 6+ @ 78%
+        > 
+        > The matchup + metrics check out. Let's ride.
+        > 
+        > #SALCI #MLB
+        
+        ---
+        
+        > 🔥 Hottest bats in baseball right now (L7):
+        > 
+        > [attach Hot Hitters chart]
+        > 
+        > SALCI tracks AVG, OPS, K%, and streaks. These guys are locked in.
+        > 
+        > #SALCI
+        """)
         
         # Sample tweet for copy/paste
         if top_pitcher:
