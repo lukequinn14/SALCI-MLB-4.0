@@ -2877,13 +2877,20 @@ def main():
                     rating_label, emoji, _ = get_rating(p["salci"])
                     lineup_badge = "✅" if p.get("lineup_confirmed") else "⏳"
                     p_hand = p.get("pitcher_hand", "R")
+                    
+                    # FIX: Handle both k_lines (v3) and lines (v1) formats
+                    lines_dict = p.get("lines", {}) or p.get("k_lines", {})
+                    k5 = lines_dict.get(5, "?")
+                    k6 = lines_dict.get(6, "?")
+                    k7 = lines_dict.get(7, "?")
+                    
                     st.markdown(f"""
                     <div style='background: #e0f2fe; padding: 1rem; border-radius: 10px; 
                                 margin-bottom: 0.5rem; border-left: 4px solid #3b82f6;'>
                         <span style='color: #1e3a5f;'><strong>#{i} {p['pitcher']} ({p_hand}HP)</strong> ({p['team']} vs {p['opponent']}) {lineup_badge}</span><br>
                         <span style='font-size: 1.2rem; color: #1e3a5f;'>{emoji} SALCI: {p['salci']}</span><br>
                         <span style='color: #1e3a5f;'>Expected: <strong>{p['expected']} Ks</strong></span><br>
-                        <span style='color: #1e3a5f;'>5+ @ {p['lines'][5]}% | 6+ @ {p['lines'][6]}% | 7+ @ {p['lines'][7]}%</span>
+                        <span style='color: #1e3a5f;'>5+ @ {k5}% | 6+ @ {k6}% | 7+ @ {k7}%</span>
                     </div>
                     """, unsafe_allow_html=True)
         
@@ -3220,18 +3227,23 @@ def main():
         h_hand = top_hitter.get('bat_side', 'R') if top_hitter else 'R'
         h_vs_hand = top_hitter.get('pitcher_hand', 'R') if top_hitter else 'R'
         
+        # FIX: Handle both formats
+        lines_dict = top_pitcher.get("lines", {}) or top_pitcher.get("k_lines", {})
+        k6_val = lines_dict.get(6, 50)
+        k7_val = lines_dict.get(7, 35)
+        
         tweet_text = f"""🚨 SALCI Game Day - {selected_date.strftime('%b %d')} 🚨
-
-🎯 Top K Play: {top_pitcher['pitcher']} ({p_hand}HP)
-• SALCI: {top_pitcher['salci']}
-• 6+ Ks: {top_pitcher['lines'].get(6, 0)}%
-• 7+ Ks: {top_pitcher['lines'].get(7, 0)}%
-
-{"🔥 Hot Bat: " + top_hitter['name'] + " (" + h_hand + "HB) vs " + h_vs_hand + "HP" + chr(10) + "• .{:03d} AVG L7".format(int(top_hitter['recent'].get('avg', 0)*1000)) if top_hitter else ""}
-
-{elite_count} Elite | {strong_count} Strong | {hot_hitters_count} Hot Bats
-
-#SALCI #MLB"""
+    
+    🎯 Top K Play: {top_pitcher['pitcher']} ({p_hand}HP)
+    • SALCI: {top_pitcher['salci']}
+    • 6+ Ks: {k6_val}%
+    • 7+ Ks: {k7_val}%
+    
+    {"🔥 Hot Bat: " + top_hitter['name'] + " (" + h_hand + "HB) vs " + h_vs_hand + "HP" + chr(10) + "• .{:03d} AVG L7".format(int(top_hitter['recent'].get('avg', 0)*1000)) if top_hitter else ""}
+    
+    {elite_count} Elite | {strong_count} Strong | {hot_hitters_count} Hot Bats
+    
+    #SALCI #MLB"""
         
         st.code(tweet_text, language=None)
     
