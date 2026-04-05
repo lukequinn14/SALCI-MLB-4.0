@@ -1637,9 +1637,31 @@ def create_k_projection_chart(pitcher_results: List[Dict]) -> go.Figure:
     # Include handedness in name
     names = [f"{p['pitcher'].split()[-1]} ({p.get('pitcher_hand', 'R')})" for p in top_pitchers]
     expected_ks = [p["expected"] for p in top_pitchers]
-    k5_probs = [p["lines"].get(5, 50) for p in top_pitchers]
-    k6_probs = [p["lines"].get(6, 40) for p in top_pitchers]
-    k7_probs = [p["lines"].get(7, 30) for p in top_pitchers]
+    # NEW: using `k_lines` dict (which has only 4 lines starting from floor)
+    k_lines_data = []
+    for p in top_pitchers:
+        klines = p.get("k_lines", {})
+        if klines:
+            k_vals = sorted(klines.keys())
+            k_lines_data.append([klines.get(k, 50) for k in k_vals[:4]])
+        else:
+            k_lines_data.append([50, 40, 30, 20])
+    
+    # Build chart
+    if k_lines_data:
+        # Get the first pitcher's K-line keys as labels
+        first_klines = sorted(top_pitchers[0].get("k_lines", {}).keys())
+        line_labels = [f"{k}+" for k in first_klines[:4]]
+        
+        for line_idx, line_label in enumerate(line_labels):
+            probs = [kld[line_idx] if line_idx < len(kld) else 0 for kld in k_lines_data]
+            fig.add_trace(go.Bar(
+                name=line_label,
+                x=names,
+                y=probs,
+                text=[f"{p}%" for p in probs],
+                textposition='outside'
+            ))
     
     fig = go.Figure()
     
@@ -1988,18 +2010,24 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                        unsafe_allow_html=True)
         
         with col3:
-            st.markdown(f"**Expected Ks:** {result['expected']}")
-            best_line = result.get('best_line', 5)
+            floor = result.get('floor', 5)
+            floor_conf = result.get('floor_confidence', 70)
+            volatility = result.get('volatility', 1.2)
+            
+            
+            st.markdown(f"**Expected Ks:** {result['expected']} | **Floor:** {floor}+ @ {floor_conf}%")
             if result.get('k_per_ip'):
-                st.markdown(f"<span style='font-size: 0.75rem; color: #666;'>{result['k_per_ip']:.2f} K/IP × {result.get('projected_ip', 5.5):.1f} IP | Best: {best_line}+</span>", 
+                st.markdown(f"<span style='font-size: 0.75rem; color: #666;'>{result['k_per_ip']:.2f} K/IP × {result.get('projected_ip', 5.5):.1f} IP | Volatility: {volatility:.1f}</span>", 
                            unsafe_allow_html=True)
-            lines = result.get('lines', {})
-            if lines:
+                
+            k_lines = result.get('k_lines', {})
+            if k_lines:
                 cols = st.columns(4)
-                for i, (k, prob) in enumerate(list(lines.items())[1:5]):
+                for i, (k_value, prob) in enumerate(sorted(k_lines.items())):
                     with cols[i]:
-                        color = "#22c55e" if prob >= 65 else "#eab308" if prob >= 45 else "#ef4444"
-                        st.markdown(f"<div style='text-align:center;'><small>{k}+</small><br>"
+                        # Color code: high confidence green, medium yellow, low red
+                        color = "#22c55e" if prob >= 70 else "#eab308" if prob >= 50 else "#ef4444"
+                        st.markdown(f"<div style='text-align:center;'><small>{k_value}+</small><br>"
                                    f"<span style='color:{color}; font-weight:bold;'>{prob}%</span></div>",
                                    unsafe_allow_html=True)
         
@@ -2566,7 +2594,6 @@ def main():
                 base_k9 = (p_baseline or p_recent or {}).get("K9", 9.0)
                 pitcher_k_pct = (p_baseline or p_recent or {}).get("K_percent", 0.22)
                 
-                # Calculate expected Ks using SALCI v3 method
                 if salci_v3_result:
                     avg_ip = combined_stats.get('total_ip', 5.5) / max(combined_stats.get('games_sampled', 1), 1)
                     efficiency = 1.0 - (combined_stats.get('P/IP', 16) - 15) * 0.05
@@ -2575,10 +2602,13 @@ def main():
                     k_projection = calculate_expected_ks_v3(salci_v3_result, avg_ip, efficiency)
                     proj = {
                         'expected': k_projection['expected_ks'],
-                        'lines': k_projection['lines'],
+                        'floor': k_projection['floor'],
+                        'floor_confidence': k_projection['floor_confidence'],
+                        'k_lines': k_projection['k_lines'],  # NEW: 4-line distribution
                         'k_per_ip': k_projection['k_per_ip'],
                         'projected_ip': k_projection['projected_ip'],
-                        'best_line': k_projection.get('best_line', 5)
+                        'best_line': k_projection['best_line'],
+                        'volatility': k_projection['volatility']
                     }
                 else:
                     proj = project_lines(salci, base_k9)
@@ -2601,6 +2631,10 @@ def main():
                     "best_line": proj.get("best_line", 5),
                     "breakdown": breakdown,
                     "lineup_confirmed": opp_lineup_info["confirmed"],
+                    "floor": proj.get("floor", 5),
+                    "floor_confidence": proj.get("floor_confidence", 70),
+                    "volatility": proj.get("volatility", 1.2),
+                    "k_lines": proj.get("k_lines", {}),
                     # v5.1 SALCI v3 Components
                     "stuff_score": stuff_score,
                     "location_score": location_score,
