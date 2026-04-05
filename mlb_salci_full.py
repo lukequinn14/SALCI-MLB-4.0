@@ -1947,6 +1947,10 @@ def create_daily_picks_card(top_pitcher: Dict, top_hitter: Dict) -> None:
 # UI Components
 # ----------------------------
 def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
+    k_metrics = calculate_expected_ks_v3(result)
+    floor_ks = k_metrics['floor']
+    confidence_score = k_metrics['confidence']
+    
     rating_label, emoji, css_class = get_rating(result["salci"])
     
     with st.container():
@@ -1984,10 +1988,10 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
         
         with col3:
             st.markdown(f"**Expected Ks:** {result['expected']}")
-            best_line = result.get('best_line', 5)
-            if result.get('k_per_ip'):
-                st.markdown(f"<span style='font-size: 0.75rem; color: #666;'>{result['k_per_ip']:.2f} K/IP × {result.get('projected_ip', 5.5):.1f} IP | Best: {best_line}+</span>", 
-                           unsafe_allow_html=True)
+            st.markdown(f"<div style='background: #fffbeb; padding: 5px; border-radius: 5px; border: 1px solid #fde68a; text-align: center; margin-bottom: 5px;'>"
+                       f"<span style='color: #b45309; font-weight: bold; font-size: 0.9rem;'>AT LEAST: {floor_ks}+ Ks</span><br>"
+                       f"<span style='color: #666; font-size: 0.7rem;'>Confidence: {confidence_score}%</span>"
+                       f"</div>", unsafe_allow_html=True)
             lines = result.get('lines', {})
             if lines:
                 cols = st.columns(4)
