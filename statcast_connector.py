@@ -44,6 +44,7 @@ try:
     cache.enable()
     PYBASEBALL_AVAILABLE = True
 except ImportError:
+    print("Warning: pybaseball not found. Statcast features will be disabled.")
     PYBASEBALL_AVAILABLE = False
 
 # =============================================================================
@@ -971,7 +972,9 @@ def get_pitcher_statcast_profile(
         }
         
     except Exception as e:
-        print(f"Error fetching Statcast data: {e}")
+        import traceback
+        print(f"Error fetching Statcast data for pitcher {player_id}: {e}")
+        traceback.print_exc()
         return None
 
 
@@ -1006,6 +1009,7 @@ def calculate_strikeout_floor_v3(
     
     # 2. Calculate Volatility (Standard Deviation)
     # Based on Stuff vs Location gap (the "profile mismatch")
+    gap = None
     if stuff_plus and location_plus:
         # Gap measures variance
         # High Stuff + Low Location = Volatile pitcher
@@ -1063,7 +1067,7 @@ def calculate_strikeout_floor_v3(
         
         # Details for analysis
         'volatility': round(volatility, 2),  # StdDev
-        'stuff_location_gap': round(gap, 1) if stuff_plus and location_plus else None,
+        'stuff_location_gap': round(gap, 1) if gap is not None else None,
         'profile': 'Volatile' if volatility > 1.5 else 'Consistent' if volatility < 1.0 else 'Normal',
         
         # Hit probability by line (Poisson-style)
