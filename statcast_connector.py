@@ -815,43 +815,35 @@ def calculate_expected_ks_v3(
     efficiency_factor: float = 1.0
 ) -> Dict:
     """
-    SALCI → Expected Ks + Statistically Sound "At Least X Ks" Floor.
-    
-    New logic:
-    - Mean expected Ks (unchanged)
-    - Volatility buffer based on Stuff/Location gap (high-stuff/low-location = volatile)
-    - Floor = highest K where P(X ≥ K) ≥ 60% using Poisson
-    - k_lines now show true P(At Least K) for the floor and next 3 lines
-    - floor_confidence = exact probability we hit the published floor
+    FINAL VERSION - SALCI v3 → Expected Ks + "At Least X Ks" Floor
+    Uses Poisson distribution + profile-aware volatility.
     """
     salci = salci_result['salci']
     components = salci_result.get('components', {})
     stuff = components.get('stuff', {}).get('raw', 100)
     location = components.get('location', {}).get('raw', 100)
 
-    # 1. Mean Expected Ks (K/IP scaling)
+    # 1. Mean Expected Ks
     k_per_ip = (salci / 50) * 1.0
     k_per_ip = max(0.5, min(2.0, k_per_ip))
     expected_ks = k_per_ip * projected_ip * efficiency_factor
 
-    # 2. Volatility (profile-aware)
+    # 2. Volatility (Stuff-dominant = higher variance)
     volatility = calculate_volatility_buffer(stuff, location)
 
-    # 3. Find the true statistical Floor
-    # Highest integer K where P(X >= K) >= 60%
+    # 3. Statistical Floor: highest K with P(X ≥ K) ≥ 60%
     floor = 0
     lambda_ks = expected_ks
-    for k in range(0, int(expected_ks) + 8):  # safe upper bound
+    for k in range(0, int(expected_ks) + 8):
         prob_ge_k = 1 - poisson.cdf(k - 1, lambda_ks) if k > 0 else 1.0
         if prob_ge_k >= 0.60:
             floor = k
         else:
             break
 
-    # 4. Confidence in the published floor
     floor_confidence = int((1 - poisson.cdf(floor - 1, lambda_ks)) * 100) if floor > 0 else 100
 
-    # 5. Generate clean K-lines (At Least probabilities)
+    # 4. K-lines (At Least probabilities)
     k_lines = {}
     for i in range(4):
         k_value = floor + i
@@ -860,20 +852,15 @@ def calculate_expected_ks_v3(
         k_lines[k_value] = prob_pct
 
     return {
-        'expected': round(expected_ks, 1),          # ← matches UI key
-        'floor': floor,                             # The "At Least X Ks" number
-        'floor_confidence': floor_confidence,       # % confidence we hit this floor
+        'expected': round(expected_ks, 1),           # ← UI key
+        'floor': floor,
+        'floor_confidence': floor_confidence,
         'volatility': round(volatility, 2),
         'k_per_ip': round(k_per_ip, 2),
         'projected_ip': projected_ip,
-        'k_lines': k_lines,                         # ← matches UI key
-        'best_line': floor,                         # for backward compat
-        'grade': salci_result.get('grade', 'C'),
-        
-        # Extra diagnostics (great for backtesting)
-        'mean_ks': round(expected_ks, 1),
-        'profile_volatility': 'HIGH' if volatility > 1.5 else 'MEDIUM' if volatility > 1.1 else 'LOW',
-        'stuff_location_gap': round(stuff - location, 1)
+        'k_lines': k_lines,
+        'best_line': floor,
+        'grade': salci_result.get('grade', 'C')
     }
 
 
@@ -1338,6 +1325,26 @@ def calculate_expected_ks(salci_score, projected_ip=5.5, efficiency_factor=1.0):
     """v2 compatibility wrapper."""
     salci_result = {'salci': salci_score}
     return calculate_expected_ks_v3(salci_result, projected_ip, efficiency_factor)
+
+expected_data = calculate_expected_ks_v3(
+    salci_result=salci_result,
+    projected_ip=5.5,          # ← change if you have a better IP projection
+    efficiency_factor=1.0      # ← 1.0 is normal; use 0.85–0.95 on short leash
+)
+
+result = {
+    "salci": salci_result['salci'],
+    "salci_grade": salci_result.get('grade', 'C'),
+    # ... all your existing fields (stuff_score, location_score, etc.) ...
+    "stuff_breakdown": stuff_breakdown,
+    
+    # ← NEW KEYS FROM THE FLOOR CALCULATION
+    "expected": expected_data["expected"],
+    "floor": expected_data["floor"],
+    "floor_confidence": expected_data["floor_confidence"],
+    "k_lines": expected_data["k_lines"],
+}
+
 
 
 # =============================================================================
