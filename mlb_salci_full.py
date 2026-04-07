@@ -1288,157 +1288,143 @@ def create_k_projection_chart(pitcher_results: List[Dict]) -> Optional[go.Figure
 # ----------------------------
 def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
     """Render pitcher card with SALCI v3 component breakdown."""
+
     salci = result["salci"]
     rating_label, emoji, css_class = get_rating(salci)
-    
+
     with st.container():
+
+        # ======================
+        # HEADER ROW
+        # ======================
         col1, col2, col3 = st.columns([2, 1, 2])
-        
+
         with col1:
             p_hand = result.get("pitcher_hand", "R")
-            st.markdown(f"### {result['pitcher']} ({p_hand}HP)")
-            st.markdown(f"**{result['team']}** vs {result['opponent']}")
-            
+
+            header_html = f"""
+            <div>
+                <div style='font-size:1.2rem; font-weight:bold;'>
+                    {result['pitcher']} ({p_hand}HP)
+                </div>
+                <div style='font-size:0.9rem; color:#555;'>
+                    {result['team']} vs {result['opponent']}
+                </div>
+            """
+
             if result.get("profile_type") and result.get("profile_type") != "BALANCED":
                 profile_emoji = {
                     "ELITE": "⚡", "STUFF-DOMINANT": "🔥", "LOCATION-DOMINANT": "🎯",
-                    "BALANCED-PLUS": "💪", "BALANCED": "⚖️", "ONE-TOOL": "📊", "LIMITED": "⚠️"
+                    "BALANCED-PLUS": "💪", "BALANCED": "⚖️",
+                    "ONE-TOOL": "📊", "LIMITED": "⚠️"
                 }.get(result["profile_type"], "❓")
-                st.markdown(f"<span style='font-size: 0.85rem;'>{profile_emoji} {result['profile_type']}</span>", 
-                           unsafe_allow_html=True)
-            
-            badges = []
-            if result.get("is_statcast"):
-                badges.append("<span style='font-size: 0.7rem; background: #10b981; color: white; padding: 2px 6px; border-radius: 4px;'>🎯 Statcast</span>")
-            else:
-                badges.append("<span style='font-size: 0.7rem; background: #6b7280; color: white; padding: 2px 6px; border-radius: 4px;'>📊 Stats API</span>")
-            
-            if badges:
-                st.markdown(" ".join(badges), unsafe_allow_html=True)
-        
+
+                header_html += f"""
+                <div style='font-size:0.8rem; margin-top:2px;'>
+                    {profile_emoji} {result['profile_type']}
+                </div>
+                """
+
+            badge = (
+                "<span style='background:#10b981;color:white;padding:2px 6px;border-radius:4px;font-size:0.7rem;'>🎯 Statcast</span>"
+                if result.get("is_statcast")
+                else "<span style='background:#6b7280;color:white;padding:2px 6px;border-radius:4px;font-size:0.7rem;'>📊 Stats API</span>"
+            )
+
+            header_html += f"<div style='margin-top:4px;'>{badge}</div></div>"
+
+            st.markdown(header_html, unsafe_allow_html=True)
+
         with col2:
             grade = result.get("salci_grade", "C")
-            st.markdown(f"<div style='text-align: center;'>"
-                       f"<span style='font-size: 2.5rem; font-weight: bold;'>{result['salci']}</span><br>"
-                       f"<span class='{css_class}'>{emoji} Grade {grade}</span></div>",
-                       unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div style='text-align:center;'>
+                <div style='font-size:2.2rem;font-weight:bold;'>{salci}</div>
+                <div class='{css_class}'>{emoji} Grade {grade}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
         with col3:
-            st.markdown(f"**Expected Ks:** {result['expected']}")
+            st.write(f"Expected Ks: {result['expected']}")
+
             k_lines = result.get("k_lines", {}) or result.get("lines", {})
             if k_lines:
                 cols = st.columns(4)
                 for i, (k_value, prob) in enumerate(sorted(k_lines.items())[:4]):
                     with cols[i]:
                         color = "#22c55e" if prob >= 70 else "#eab308" if prob >= 50 else "#ef4444"
-                        st.markdown(f"<div style='text-align:center;'><small>{k_value}+</small><br>"
-                                   f"<span style='color:{color}; font-weight:bold;'>{prob}%</span></div>",
-                                    unsafe_allow_html=True)
+                        st.markdown(f"""
+                        <div style='text-align:center;'>
+                            <div style='font-size:0.7rem;'>{k_value}+</div>
+                            <div style='color:{color};font-weight:bold;'>{prob}%</div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-
-        
-        # v5.1: SALCI v3 4-Component Breakdown
+        # ======================
+        # COMPONENT BREAKDOWN
+        # ======================
         if show_stuff_location:
+
             stuff = result.get("stuff_score")
             location = result.get("location_score")
             matchup = result.get("matchup_score")
             workload = result.get("workload_score")
-            
-            if stuff or location or matchup or workload:
-                st.markdown("<div style='margin-top: 0.5rem;'>", unsafe_allow_html=True)
-                
-                col_s, col_m, col_w, col_l = st.columns(4)
-                
-                def get_component_color(score, is_100_scale=True):
-                    """Get color for component score."""
-                    if score is None:
-                        return "#d1d5db"  # Gray
-                    if is_100_scale:
-                        if score >= 115: return "#10b981"
-                        if score >= 105: return "#22c55e"
-                        if score >= 95: return "#eab308"
-                        return "#ef4444"
-                    else:
-                        if score >= 65: return "#10b981"
-                        if score >= 50: return "#22c55e"
-                        if score >= 35: return "#eab308"
-                        return "#ef4444"
-                
-                # Stuff (40%)
-                with col_s:
+
+            if any([stuff, location, matchup, workload]):
+
+                def color_100(x):
+                    if x >= 115: return "#10b981"
+                    if x >= 105: return "#22c55e"
+                    if x >= 95: return "#eab308"
+                    return "#ef4444"
+
+                def color_70(x):
+                    if x >= 65: return "#10b981"
+                    if x >= 50: return "#22c55e"
+                    if x >= 35: return "#eab308"
+                    return "#ef4444"
+
+                def bar(val, pct, color, label):
+                    return f"""
+                    <div style='text-align:center;'>
+                        <div style='font-size:0.7rem;color:#666;'>{label}</div>
+                        <div style='font-size:1.1rem;font-weight:bold;color:{color};'>{val}</div>
+                        <div style='background:#e5e7eb;height:6px;border-radius:4px;'>
+                            <div style='width:{pct}%;background:{color};height:100%;border-radius:4px;'></div>
+                        </div>
+                    </div>
+                    """
+
+                cols = st.columns(4)
+
+                with cols[0]:
                     if stuff:
-                        stuff_color = get_component_color(stuff, is_100_scale=True)
-                        stuff_pct = min(100, max(0, (stuff - 70) * 2))
-                        st.markdown(f"""
-                        <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>⚡ STUFF (40%)</div>
-                            <div style='font-size: 1.2rem; font-weight: bold; color: {stuff_color};'>{int(stuff)}</div>
-                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
-                                <div style='width: {stuff_pct}%; background: {stuff_color}; border-radius: 4px; height: 100%;'></div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>STUFF<br>--</div>", 
-                                   unsafe_allow_html=True)
-                
-                # Matchup (25%)
-                with col_m:
+                        st.markdown(bar(int(stuff), min(100, (stuff-70)*2), color_100(stuff), "⚡ STUFF"),
+                                    unsafe_allow_html=True)
+
+                with cols[1]:
                     if matchup:
-                        match_color = get_component_color(matchup, is_100_scale=False)
-                        st.markdown(f"""
-                        <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>🎯 MATCHUP (25%)</div>
-                            <div style='font-size: 1.2rem; font-weight: bold; color: {match_color};'>{int(matchup)}</div>
-                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
-                                <div style='width: {matchup}%; background: {match_color}; border-radius: 4px; height: 100%;'></div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>MATCHUP<br>--</div>", 
-                                   unsafe_allow_html=True)
-                
-                # Workload (20%)
-                with col_w:
+                        st.markdown(bar(int(matchup), matchup, color_70(matchup), "🎯 MATCHUP"),
+                                    unsafe_allow_html=True)
+
+                with cols[2]:
                     if workload:
-                        work_color = get_component_color(workload, is_100_scale=False)
-                        st.markdown(f"""
-                        <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>📊 WORKLOAD (20%)</div>
-                            <div style='font-size: 1.2rem; font-weight: bold; color: {work_color};'>{int(workload)}</div>
-                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
-                                <div style='width: {workload}%; background: {work_color}; border-radius: 4px; height: 100%;'></div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>WORKLOAD<br>--</div>", 
-                                   unsafe_allow_html=True)
-                
-                # Location (15%)
-                with col_l:
+                        st.markdown(bar(int(workload), workload, color_70(workload), "📊 WORKLOAD"),
+                                    unsafe_allow_html=True)
+
+                with cols[3]:
                     if location:
-                        loc_color = get_component_color(location, is_100_scale=True)
-                        loc_pct = min(100, max(0, (location - 70) * 2))
-                        st.markdown(f"""
-                        <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>📍 LOCATION (15%)</div>
-                            <div style='font-size: 1.2rem; font-weight: bold; color: {loc_color};'>{int(location)}</div>
-                            <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
-                                <div style='width: {loc_pct}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>LOCATION<br>--</div>", 
-                                   unsafe_allow_html=True)
-                
-                # Arsenal display
-                stuff_breakdown = result.get("stuff_breakdown", {})
-                if stuff_breakdown and result.get("is_statcast"):
-                    render_arsenal_display(stuff_breakdown)
-        
+                        st.markdown(bar(int(location), min(100, (location-70)*2), color_100(location), "📍 LOCATION"),
+                                    unsafe_allow_html=True)
+
+        # ======================
+        # ARSENAL (SAFE CALL)
+        # ======================
+        stuff_breakdown = result.get("stuff_breakdown", {})
+        if stuff_breakdown and result.get("is_statcast"):
+            render_arsenal_display(stuff_breakdown)
+
         st.progress(min(result["salci"] / 100, 1.0))
         st.markdown("---")
 
@@ -1446,41 +1432,34 @@ def render_arsenal_display(stuff_breakdown: Dict):
     if not stuff_breakdown:
         return
 
-    with st.container():  # ✅ FIX: isolate rendering
+    pitches = sorted([
+        {
+            "name": k,
+            "velo": v.get("velocity", 0),
+            "usage": v.get("usage", 0),
+            "stuff": v.get("stuff_plus", 100),
+            "whiff": v.get("whiff_rate", 0)
+        }
+        for k, v in stuff_breakdown.items()
+    ], key=lambda x: x["usage"], reverse=True)
 
-        pitches = []
-        for pitch, data in stuff_breakdown.items():
-            pitches.append({
-                "name": pitch,
-                "velo": data.get("velocity", 0),
-                "usage": data.get("usage", 0),
-                "stuff": data.get("stuff_plus", 100),
-                "whiff": data.get("whiff_rate", 0)
-            })
+    html = "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;'>"
 
-        # Sort by usage (optional but nice)
-        pitches = sorted(pitches, key=lambda x: x["usage"], reverse=True)
+    for p in pitches:
+        color = "#22c55e" if p["stuff"] >= 105 else "#6b7280"
 
-        # Build HTML safely
-        arsenal_html = """
-        <div style='margin-top: 0.5rem; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 8px; display: flex; gap: 8px; flex-wrap: wrap;'>
+        html += f"""
+        <div style='border:1px solid {color};padding:6px 10px;border-radius:6px;min-width:80px;background:rgba(34,197,94,0.1);'>
+            <div style='font-size:0.75rem;font-weight:bold;color:{color};'>{p["name"]}</div>
+            <div style='font-size:0.65rem;color:#666;'>{p["velo"]} mph • {p["usage"]}%</div>
+            <div style='font-size:0.8rem;font-weight:bold;color:{color};'>Stuff+ {p["stuff"]}</div>
+            <div style='font-size:0.6rem;color:#888;'>Whiff {p["whiff"]}%</div>
+        </div>
         """
 
-        for p in pitches:
-            color = "#22c55e" if p["stuff"] >= 105 else "#6b7280"
+    html += "</div>"
 
-            arsenal_html += f"""
-            <div style='background: rgba(34, 197, 94, 0.1); border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; min-width: 80px;'>
-                <div style='font-size: 0.75rem; font-weight: bold; color: {color};'>{p["name"]}</div>
-                <div style='font-size: 0.65rem; color: #666;'>{p["velo"]} mph • {p["usage"]}%</div>
-                <div style='font-size: 0.85rem; font-weight: bold; color: {color};'>Stuff+ {p["stuff"]}</div>
-                <div style='font-size: 0.6rem; color: #888;'>Whiff {p["whiff"]}%</div>
-            </div>
-            """
-
-        arsenal_html += "</div>"
-
-        st.markdown(arsenal_html, unsafe_allow_html=True)
+    st.markdown(html, unsafe_allow_html=True)
 
 def render_hitter_card(hitter: Dict, show_batting_order: bool = True):
     """Render hitter card with stats and matchup grade."""
