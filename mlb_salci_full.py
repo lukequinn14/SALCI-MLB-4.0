@@ -36,6 +36,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
 import os
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ----------------------------
 # Statcast & Reflection Integration
@@ -1125,6 +1127,94 @@ def create_salci_breakdown_chart() -> go.Figure:
         ]
     )
     
+    return fig
+
+def create_expected_vs_salci_chart(pitchers: List[Dict]):
+    """Expected Ks vs SALCI scatter (top 10 labeled)"""
+    if len(pitchers) < 3:
+        return None
+    
+    df = pd.DataFrame([
+        {
+            "Pitcher": p.get("pitcher", "Unknown"),
+            "SALCI": p.get("salci", 0),
+            "Expected Ks": p.get("expected", 0),
+            "Floor": p.get("floor", 0),
+            "Profile": p.get("profile_type", "Balanced")
+        }
+        for p in pitchers
+    ])
+    
+    fig = px.scatter(
+        df,
+        x="SALCI",
+        y="Expected Ks",
+        hover_name="Pitcher",
+        color="Profile",
+        size="Floor",
+        text="Pitcher",
+        title="Expected Strikeouts vs SALCI Score",
+        labels={"Expected Ks": "Projected Strikeouts", "SALCI": "SALCI Score"}
+    )
+    
+    # Highlight and label top 10
+    top10 = df.nlargest(10, "Expected Ks")
+    for i, row in top10.iterrows():
+        fig.add_annotation(
+            x=row["SALCI"], y=row["Expected Ks"],
+            text=row["Pitcher"].split()[0],  # first name only
+            showarrow=True,
+            arrowhead=2,
+            ax=0, ay=-25,
+            font=dict(size=12, color="#10b981")
+        )
+    
+    fig.update_layout(
+        height=420,
+        template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)"
+    )
+    return fig
+
+
+def create_top_10_expected_ks_chart(pitchers: List[Dict]):
+    """Top 10 Expected Strikeouts horizontal bar"""
+    if not pitchers:
+        return None
+    
+    df = pd.DataFrame([
+        {
+            "Pitcher": p.get("pitcher", "Unknown"),
+            "Expected Ks": p.get("expected", 0),
+            "At Least": f"{p.get('floor', 0)}+ Ks",
+            "Confidence": p.get("floor_confidence", 0)
+        }
+        for p in pitchers
+    ])
+    
+    df = df.nlargest(10, "Expected Ks")
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        y=df["Pitcher"],
+        x=df["Expected Ks"],
+        text=df["At Least"] + " (" + df["Confidence"].astype(str) + "%)",
+        textposition="inside",
+        orientation="h",
+        marker=dict(color="#10b981", opacity=0.85)
+    ))
+    
+    fig.update_layout(
+        title="Top 10 Projected Strikeouts (with At Least confidence)",
+        xaxis_title="Expected Strikeouts",
+        height=500,
+        template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(autorange="reversed")
+    )
     return fig
 
 def create_matchup_scatter(hitter_results: List[Dict]) -> Optional[go.Figure]:
@@ -2387,7 +2477,28 @@ def main():
         else:
             st.success(f"✅ Using {len(confirmed_pitchers)} pitchers with confirmed opponent lineups")
             
-            # Charts
+            # === NEW CHARTS: Expected Ks Focus ===
+            col_new1, col_new2 = st.columns(2)
+            
+            with col_new1:
+                st.markdown("#### 📈 Expected Ks vs SALCI")
+                fig_expected_salci = create_expected_vs_salci_chart(confirmed_pitchers)
+                if fig_expected_salci:
+                    st.plotly_chart(fig_expected_salci, use_container_width=True)
+                else:
+                    st.info("Not enough data for Expected vs SALCI chart")
+            
+            with col_new2:
+                st.markdown("#### 🔥 Top 10 Expected Strikeouts")
+                fig_top10_ks = create_top_10_expected_ks_chart(confirmed_pitchers)
+                if fig_top10_ks:
+                    st.plotly_chart(fig_top10_ks, use_container_width=True)
+                else:
+                    st.info("No pitcher data available")
+            
+            st.markdown("---")
+            
+            # Your original charts stay exactly the same
             col1, col2 = st.columns(2)
             
             with col1:
