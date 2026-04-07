@@ -1217,6 +1217,77 @@ def create_top_10_expected_ks_chart(pitchers: List[Dict]):
     )
     return fig
 
+
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+
+def create_expected_vs_salci_chart(pitchers: List[Dict]):
+    if len(pitchers) < 3:
+        return None
+    df = pd.DataFrame([{
+        "Pitcher": p.get("pitcher", "Unknown"),
+        "SALCI": p.get("salci", 0),
+        "Expected Ks": p.get("expected", 0),
+        "Floor": p.get("floor", 0),
+        "Profile": p.get("profile_type", "Balanced")
+    } for p in pitchers])
+    
+    fig = px.scatter(df, x="SALCI", y="Expected Ks",
+                     hover_name="Pitcher", color="Profile",
+                     size="Floor", text="Pitcher",
+                     title="Expected Strikeouts vs SALCI Score")
+    fig.update_layout(height=420, template="plotly_dark")
+    return fig
+
+
+def create_top_10_expected_ks_chart(pitchers: List[Dict]):
+    if not pitchers:
+        return None
+    df = pd.DataFrame([{
+        "Pitcher": p.get("pitcher", "Unknown"),
+        "Expected Ks": p.get("expected", 0),
+        "At Least": f"{p.get('floor', 0)}+ Ks",
+        "Confidence": p.get("floor_confidence", 0)
+    } for p in pitchers])
+    df = df.nlargest(10, "Expected Ks")
+    
+    fig = go.Figure(go.Bar(
+        y=df["Pitcher"], x=df["Expected Ks"],
+        text=df["At Least"] + " (" + df["Confidence"].astype(str) + "%)",
+        textposition="inside", orientation="h",
+        marker=dict(color="#10b981", opacity=0.85)
+    ))
+    fig.update_layout(
+        title="Top 10 Projected Strikeouts",
+        xaxis_title="Expected Strikeouts",
+        height=500,
+        template="plotly_dark",
+        yaxis=dict(autorange="reversed")
+    )
+    return fig
+
+
+def create_salci_vs_confidence_chart(pitchers: List[Dict]):
+    """Bonus: Shows how reliable each SALCI projection is"""
+    if len(pitchers) < 3:
+        return None
+    df = pd.DataFrame([{
+        "Pitcher": p.get("pitcher", "Unknown")[:15],
+        "SALCI": p.get("salci", 0),
+        "Floor Confidence": p.get("floor_confidence", 0),
+        "Expected Ks": p.get("expected", 0)
+    } for p in pitchers])
+    
+    fig = px.scatter(df, x="SALCI", y="Floor Confidence",
+                     hover_name="Pitcher", size="Expected Ks",
+                     title="SALCI Score vs Floor Confidence (%)",
+                     labels={"Floor Confidence": "Confidence in At Least X Ks"})
+    fig.update_layout(height=420, template="plotly_dark")
+    return fig
+
+
+
 def create_matchup_scatter(hitter_results: List[Dict]) -> Optional[go.Figure]:
     """Create scatter plot of hitters: K% vs AVG."""
     if not hitter_results or len(hitter_results) < 3:
@@ -2467,7 +2538,6 @@ def main():
         
         st.markdown("---")
         
-        # CRITICAL FIX: Only use confirmed pitchers/hitters
         confirmed_pitchers = [p for p in all_pitcher_results if p.get("lineup_confirmed", False)]
         confirmed_hitters = [h for h in all_hitter_results if h.get("lineup_confirmed", False)]
         
@@ -2477,8 +2547,8 @@ def main():
         else:
             st.success(f"✅ Using {len(confirmed_pitchers)} pitchers with confirmed opponent lineups")
             
-            # === NEW CHARTS: Expected Ks Focus ===
-            col_new1, col_new2 = st.columns(2)
+            # === NEW TOP SECTION: Expected Ks Focus ===
+            col_new1, col_new2, col_new3 = st.columns(3)
             
             with col_new1:
                 st.markdown("#### 📈 Expected Ks vs SALCI")
@@ -2486,7 +2556,7 @@ def main():
                 if fig_expected_salci:
                     st.plotly_chart(fig_expected_salci, use_container_width=True)
                 else:
-                    st.info("Not enough data for Expected vs SALCI chart")
+                    st.info("Not enough data")
             
             with col_new2:
                 st.markdown("#### 🔥 Top 10 Expected Strikeouts")
@@ -2494,40 +2564,40 @@ def main():
                 if fig_top10_ks:
                     st.plotly_chart(fig_top10_ks, use_container_width=True)
                 else:
-                    st.info("No pitcher data available")
+                    st.info("No pitcher data")
+            
+            with col_new3:
+                st.markdown("#### ⚡ SALCI vs Floor Confidence")
+                fig_confidence = create_salci_vs_confidence_chart(confirmed_pitchers)
+                if fig_confidence:
+                    st.plotly_chart(fig_confidence, use_container_width=True)
+                else:
+                    st.info("Not enough data")
             
             st.markdown("---")
             
-            # Your original charts stay exactly the same
+            # === YOUR ORIGINAL CHARTS (unchanged) ===
             col1, col2 = st.columns(2)
-            
             with col1:
                 st.markdown("#### 📈 Pitcher SALCI Rankings")
                 fig_pitchers = create_pitcher_comparison_chart(confirmed_pitchers)
                 if fig_pitchers:
                     st.plotly_chart(fig_pitchers, use_container_width=True)
-                else:
-                    st.info("No pitcher data available")
             
             with col2:
                 st.markdown("#### 🔥 Hot Hitters (L7)")
                 fig_hitters = create_hitter_hotness_chart(confirmed_hitters)
                 if fig_hitters:
                     st.plotly_chart(fig_hitters, use_container_width=True)
-                else:
-                    st.info("No hitter data available")
             
             st.markdown("---")
             
             col3, col4 = st.columns(2)
-            
             with col3:
                 st.markdown("#### 🎯 K Line Projections")
                 fig_k_lines = create_k_projection_chart(confirmed_pitchers)
                 if fig_k_lines:
                     st.plotly_chart(fig_k_lines, use_container_width=True)
-                else:
-                    st.info("No pitcher data available")
             
             with col4:
                 st.markdown("#### 🧮 SALCI v3 Weight Distribution")
@@ -2540,8 +2610,6 @@ def main():
             fig_scatter = create_matchup_scatter(confirmed_hitters)
             if fig_scatter:
                 st.plotly_chart(fig_scatter, use_container_width=True)
-            else:
-                st.info("Need at least 3 hitters with confirmed lineups for scatter plot")
             
             st.markdown("---")
             
@@ -2550,27 +2618,19 @@ def main():
             fig_stuff_loc = create_stuff_location_chart(confirmed_pitchers)
             if fig_stuff_loc:
                 st.plotly_chart(fig_stuff_loc, use_container_width=True)
-            else:
-                st.info("Need at least 3 pitchers with Stuff/Location data")
             
             st.markdown("---")
             
             with st.expander("📱 Tips for Sharing on Twitter/X"):
                 st.markdown("""
                 **How to share these charts:**
+                1. Screenshot the chart
+                2. Crop to focus on the visual
+                3. Post with #SALCI
                 
-                1. **Screenshot** the chart you want to share
-                2. **Crop** to focus on the visual
-                3. **Post** with hashtag #SALCI
-                
-                **Sample tweet templates:**
-                
-                > 🚨 Today's top SALCI pitcher: [Name] at 82 🔥
-                > 
-                > Expected: 7.2 Ks | 6+ @ 78%
-                > 
-                > The matchup + metrics check out. Let's ride.
-                > 
+                **Sample tweet:**
+                > 🚨 Top SALCI pitcher today: [Name] at 82 🔥  
+                > Expected: 7.2 Ks | 6+ @ 78%  
                 > #SALCI #MLB
                 """)
     
