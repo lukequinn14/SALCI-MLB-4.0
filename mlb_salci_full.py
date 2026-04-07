@@ -1456,6 +1456,77 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
         st.progress(min(result["salci"] / 100, 1.0))
         st.markdown("---")
 
+def render_compact_summary(pitcher_results: List[Dict]):
+    """
+    Renders a clean, copy-paste-ready summary block of ALL pitchers
+    sorted by SALCI descending (highest first).
+    
+    Exact format you asked for:
+    Player Name
+    #SALCI: XX.X
+    Expected: X.X
+    Ks 6+ @ 66% | 7+ @ 51% | 8+ @ 36%
+    """
+    if not pitcher_results:
+        st.info("No pitchers to summarize yet.")
+        return
+    
+    # Sort by SALCI descending
+    sorted_pitchers = sorted(
+        pitcher_results,
+        key=lambda x: x.get("salci", 0),
+        reverse=True
+    )
+    
+    st.markdown("---")
+    st.markdown("### 📋 Quick Copy SALCI Summary (Highest → Lowest)")
+    
+    summary_lines = []
+    
+    for result in sorted_pitchers:
+        name = result.get("pitcher", "Unknown")
+        salci = result.get("salci", 0)
+        expected = result.get("expected", "--")
+        
+        # Get the k_lines (already sorted from floor upward)
+        k_lines = result.get("k_lines", {})
+        
+        # Take the first 3 "At Least" lines
+        lines = []
+        for k_value, prob in list(k_lines.items())[:3]:
+            lines.append(f"{k_value}+ @ {prob}%")
+        
+        line_str = " | ".join(lines) if lines else "No K-lines"
+        
+        summary_block = f"""
+**{name}**
+#SALCI: {salci}
+Expected: {expected}
+Ks {line_str}
+"""
+        summary_lines.append(summary_block.strip())
+    
+    # Join everything with blank lines for perfect copy-paste
+    full_summary = "\n\n".join(summary_lines)
+    
+    # Display in a clean box that's easy to triple-click and copy
+    st.markdown(
+        f"""
+<div style="background: rgba(255,255,255,0.05); 
+            padding: 16px; 
+            border-radius: 8px; 
+            font-family: monospace; 
+            white-space: pre-wrap;">
+{full_summary}
+</div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    # Optional: also show a plain-text version in st.code for one-click copy
+    st.caption("👇 Triple-click below to copy the entire list")
+    st.code(full_summary, language=None)
+
 
 def render_arsenal_display(stuff_breakdown: Dict):
     """Render pitch arsenal with per-pitch Stuff+ scores using native columns (more reliable)."""
