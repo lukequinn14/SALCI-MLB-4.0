@@ -2129,6 +2129,8 @@ def main():
                         st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>", 
                                    unsafe_allow_html=True)
                     render_pitcher_card(result)
+            render_compact_summary(all_pitcher_results)
+    
     
     # ======================
     # TAB 2: Hitter Matchups
