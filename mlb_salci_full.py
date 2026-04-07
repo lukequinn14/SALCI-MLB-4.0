@@ -1443,75 +1443,44 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
         st.markdown("---")
 
 def render_arsenal_display(stuff_breakdown: Dict):
-    """Render pitch arsenal with per-pitch Stuff+ scores."""
     if not stuff_breakdown:
         return
-    
-    pitches = []
-    for pitch_type, data in stuff_breakdown.items():
-        if isinstance(data, dict) and data.get('usage_pct', 0) >= 5:
+
+    with st.container():  # ✅ FIX: isolate rendering
+
+        pitches = []
+        for pitch, data in stuff_breakdown.items():
             pitches.append({
-                'type': pitch_type,
-                'stuff': data.get('stuff_plus', 100),
-                'velo': data.get('velocity', 0),
-                'usage': data.get('usage_pct', 0),
-                'whiff': data.get('observed_whiff_pct', 0)
+                "name": pitch,
+                "velo": data.get("velocity", 0),
+                "usage": data.get("usage", 0),
+                "stuff": data.get("stuff_plus", 100),
+                "whiff": data.get("whiff_rate", 0)
             })
-    
-    if not pitches:
-        return
-    
-    pitches.sort(key=lambda x: x['usage'], reverse=True)
-    
-    pitch_names = {
-        'FF': ('4-Seam', '#ef4444'),
-        'SI': ('Sinker', '#f97316'),
-        'FC': ('Cutter', '#eab308'),
-        'SL': ('Slider', '#22c55e'),
-        'ST': ('Sweeper', '#14b8a6'),
-        'CU': ('Curve', '#3b82f6'),
-        'KC': ('Knuckle-C', '#6366f1'),
-        'CH': ('Change', '#a855f7'),
-        'FS': ('Splitter', '#ec4899'),
-        'SV': ('Slurve', '#06b6d4'),
-    }
-    
-    arsenal_html = """<div style='margin-top: 0.5rem; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 8px;'>"""
-    arsenal_html += "<div style='font-size: 0.7rem; color: #666; margin-bottom: 4px;'>🎪 ARSENAL</div>"
-    arsenal_html += "<div style='display: flex; flex-wrap: wrap; gap: 8px;'>"
-    
-    for pitch in pitches[:5]:
-        p_type = pitch['type']
-        name, color = pitch_names.get(p_type, (p_type, '#6b7280'))
-        stuff = pitch['stuff']
-        velo = pitch['velo']
-        usage = pitch['usage']
-        whiff = pitch['whiff']
-        
-        if stuff >= 115:
-            stuff_color = "#10b981"
-            stuff_bg = "rgba(16, 185, 129, 0.1)"
-        elif stuff >= 105:
-            stuff_color = "#22c55e"
-            stuff_bg = "rgba(34, 197, 94, 0.1)"
-        elif stuff >= 95:
-            stuff_color = "#6b7280"
-            stuff_bg = "rgba(107, 114, 128, 0.1)"
-        else:
-            stuff_color = "#ef4444"
-            stuff_bg = "rgba(239, 68, 68, 0.1)"
-        
-        arsenal_html += f"""
-        <div style='background: {stuff_bg}; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; min-width: 80px;'>
-            <div style='font-size: 0.75rem; font-weight: bold; color: {color};'>{name}</div>
-            <div style='font-size: 0.65rem; color: #666;'>{velo:.0f} mph • {usage:.0f}%</div>
-            <div style='font-size: 0.85rem; font-weight: bold; color: {stuff_color};'>Stuff+ {int(stuff)}</div>
-            <div style='font-size: 0.6rem; color: #888;'>Whiff {whiff:.0f}%</div>
-        </div>
+
+        # Sort by usage (optional but nice)
+        pitches = sorted(pitches, key=lambda x: x["usage"], reverse=True)
+
+        # Build HTML safely
+        arsenal_html = """
+        <div style='margin-top: 0.5rem; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 8px; display: flex; gap: 8px; flex-wrap: wrap;'>
         """
-    
-    arsenal_html += "</div></div>"
-    st.markdown(arsenal_html, unsafe_allow_html=True)
+
+        for p in pitches:
+            color = "#22c55e" if p["stuff"] >= 105 else "#6b7280"
+
+            arsenal_html += f"""
+            <div style='background: rgba(34, 197, 94, 0.1); border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; min-width: 80px;'>
+                <div style='font-size: 0.75rem; font-weight: bold; color: {color};'>{p["name"]}</div>
+                <div style='font-size: 0.65rem; color: #666;'>{p["velo"]} mph • {p["usage"]}%</div>
+                <div style='font-size: 0.85rem; font-weight: bold; color: {color};'>Stuff+ {p["stuff"]}</div>
+                <div style='font-size: 0.6rem; color: #888;'>Whiff {p["whiff"]}%</div>
+            </div>
+            """
+
+        arsenal_html += "</div>"
+
+        st.markdown(arsenal_html, unsafe_allow_html=True)
 
 def render_hitter_card(hitter: Dict, show_batting_order: bool = True):
     """Render hitter card with stats and matchup grade."""
