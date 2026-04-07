@@ -1324,7 +1324,10 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                        unsafe_allow_html=True)
 
         with col3:
-            st.markdown(f"**Expected Ks:** {result['expected']}")
+            expected_data = calculate_expected_ks_v3(...)
+            st.markdown(f"**Expected Ks:** {expected_data['expected']}")
+            st.markdown(f"**At Least:** <span style='color:#10b981; font-weight:bold;'>{expected_data['floor']} Ks</span> "
+            f"({expected_data['floor_confidence']}% confidence)", unsafe_allow_html=True)
             k_lines = result.get("k_lines", {}) or result.get("lines", {})
             if k_lines:
                 cols = st.columns(4)
