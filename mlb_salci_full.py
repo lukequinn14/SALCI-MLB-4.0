@@ -1528,6 +1528,7 @@ Ks {line_str}
     st.code(full_summary, language=None)
 
 
+
 def render_arsenal_display(stuff_breakdown: Dict):
     """Render pitch arsenal with per-pitch Stuff+ scores using native columns (more reliable)."""
     if not stuff_breakdown:
