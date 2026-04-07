@@ -1434,8 +1434,6 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>LOCATION<br>--</div>", 
                                    unsafe_allow_html=True)
                 
-                st.markdown("</div>", unsafe_allow_html=True)
-                
                 # Arsenal display
                 stuff_breakdown = result.get("stuff_breakdown", {})
                 if stuff_breakdown and result.get("is_statcast"):
@@ -1478,7 +1476,7 @@ def render_arsenal_display(stuff_breakdown: Dict):
         'SV': ('Slurve', '#06b6d4'),
     }
     
-    arsenal_html = "<div style='margin-top: 0.5rem; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 8px;'>"
+    arsenal_html = """<div style='margin-top: 0.5rem; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 8px;'>"""
     arsenal_html += "<div style='font-size: 0.7rem; color: #666; margin-bottom: 4px;'>🎪 ARSENAL</div>"
     arsenal_html += "<div style='display: flex; flex-wrap: wrap; gap: 8px;'>"
     
