@@ -1326,25 +1326,6 @@ def calculate_expected_ks(salci_score, projected_ip=5.5, efficiency_factor=1.0):
     salci_result = {'salci': salci_score}
     return calculate_expected_ks_v3(salci_result, projected_ip, efficiency_factor)
 
-expected_data = calculate_expected_ks_v3(
-    salci_result=salci_result,
-    projected_ip=5.5,          # ← change if you have a better IP projection
-    efficiency_factor=1.0      # ← 1.0 is normal; use 0.85–0.95 on short leash
-)
-
-result = {
-    "salci": salci_result['salci'],
-    "salci_grade": salci_result.get('grade', 'C'),
-    # ... all your existing fields (stuff_score, location_score, etc.) ...
-    "stuff_breakdown": stuff_breakdown,
-    
-    # ← NEW KEYS FROM THE FLOOR CALCULATION
-    "expected": expected_data["expected"],
-    "floor": expected_data["floor"],
-    "floor_confidence": expected_data["floor_confidence"],
-    "k_lines": expected_data["k_lines"],
-}
-
 
 
 # =============================================================================
