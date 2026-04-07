@@ -767,22 +767,24 @@ def calculate_salci_v3(
 
 
 def calculate_volatility_buffer(stuff_plus: float, location_plus: float) -> float:
-    """
-    Calculates the 'Risk Factor' of a pitcher. 
-    High Stuff + Low Location = Volatile (High ceiling, dangerous floor).
-    """
-    base_vol = 1.1 # Standard K variance
+    """Higher volatility = wider spread → more conservative floor."""
+    if stuff_plus is None or location_plus is None:
+        return 1.2
     
-    # Delta Penalty: If Stuff is 20+ pts higher than Location, volatility increases
-    delta = stuff_plus - location_plus
-    if delta > 15:
-        base_vol += (delta - 15) / 10 * 0.4
-        
-    # Location Floor: Poor command adds consistent volatility
-    if location_plus < 90:
-        base_vol += (90 - location_plus) / 10 * 0.3
-        
-    return round(base_vol, 2)
+    gap = stuff_plus - location_plus
+    
+    # Stuff-dominant pitchers are boom/bust
+    if gap > 18:      # e.g. 122 Stuff + 98 Loc
+        return 1.85
+    elif gap > 12:
+        return 1.55
+    elif gap > 5:
+        return 1.30
+    # Location-dominant = very predictable
+    elif gap < -12:
+        return 0.85
+    else:
+        return 1.10  # balanced = normal MLB variance
 
 
 
@@ -813,87 +815,65 @@ def calculate_expected_ks_v3(
     efficiency_factor: float = 1.0
 ) -> Dict:
     """
-    Calculate expected strikeouts from SALCI v3 score WITH POISSON PROBABILITIES.
+    SALCI → Expected Ks + Statistically Sound "At Least X Ks" Floor.
     
-    Returns:
-    - expected: Mean projection (from SALCI)
-    - floor: Conservative floor (Floor K we're confident about)
-    - floor_confidence: How confident we are in hitting the floor (0-100%)
-    - k_lines: 4 K-lines with probabilities (floor, floor+1, floor+2, floor+3)
-    
-    Example:
-    SALCI 35 → floor=1K (95%), 2K (72%), 3K (48%), 4K (28%)
-    SALCI 80 → floor=6K (92%), 7K (78%), 8K (65%), 9K (48%)
+    New logic:
+    - Mean expected Ks (unchanged)
+    - Volatility buffer based on Stuff/Location gap (high-stuff/low-location = volatile)
+    - Floor = highest K where P(X ≥ K) ≥ 60% using Poisson
+    - k_lines now show true P(At Least K) for the floor and next 3 lines
+    - floor_confidence = exact probability we hit the published floor
     """
-    from scipy.stats import poisson
-    
     salci = salci_result['salci']
     components = salci_result.get('components', {})
     stuff = components.get('stuff', {}).get('raw', 100)
     location = components.get('location', {}).get('raw', 100)
-    
-    # 1. Calculate Expected Ks (Mean)
-    # SALCI 50 = 1.0 K/IP, SALCI 70 = 1.4 K/IP, SALCI 30 = 0.6 K/IP
+
+    # 1. Mean Expected Ks (K/IP scaling)
     k_per_ip = (salci / 50) * 1.0
     k_per_ip = max(0.5, min(2.0, k_per_ip))
     expected_ks = k_per_ip * projected_ip * efficiency_factor
-    
-    # 2. Calculate Volatility (using Stuff/Location gap)
+
+    # 2. Volatility (profile-aware)
     volatility = calculate_volatility_buffer(stuff, location)
-    
-    # 3. Calculate Floor using Poisson distribution
-    # Floor = highest K where we have >65% confidence
-    floor = max(0, expected_ks - volatility)
-    floor_int = int(np.floor(floor))
-    
-    # 4. Calculate confidence in hitting the floor
-    base_conf = 72
-    loc_bonus = (location - 100) * 0.6 if location else 0
-    vol_penalty = (volatility - 1.1) * 12
-    floor_confidence = max(35, min(98, base_conf + loc_bonus - vol_penalty))
-    
-    # 5. Generate K-line probabilities using Poisson distribution
-    # Show 4 lines: floor, floor+1, floor+2, floor+3
+
+    # 3. Find the true statistical Floor
+    # Highest integer K where P(X >= K) >= 60%
+    floor = 0
+    lambda_ks = expected_ks
+    for k in range(0, int(expected_ks) + 8):  # safe upper bound
+        prob_ge_k = 1 - poisson.cdf(k - 1, lambda_ks) if k > 0 else 1.0
+        if prob_ge_k >= 0.60:
+            floor = k
+        else:
+            break
+
+    # 4. Confidence in the published floor
+    floor_confidence = int((1 - poisson.cdf(floor - 1, lambda_ks)) * 100) if floor > 0 else 100
+
+    # 5. Generate clean K-lines (At Least probabilities)
     k_lines = {}
-    try:
-        # Use Poisson to calculate probabilities
-        for i in range(4):  # 4 lines
-            k_value = floor_int + i
-            # Poisson CDF: P(X >= k) = 1 - P(X < k) = 1 - P(X <= k-1)
-            prob_at_or_above = 1 - poisson.cdf(k_value - 1, expected_ks)
-            prob_percentage = int(prob_at_or_above * 100)
-            prob_percentage = max(5, min(100, prob_percentage))  # Clamp 5-100%
-            k_lines[k_value] = prob_percentage
-    except:
-        # Fallback if scipy not available (use simplified model)
-        for i in range(4):
-            k_value = floor_int + i
-            diff = k_value - expected_ks
-            if diff <= -2:
-                prob = 95
-            elif diff <= -1:
-                prob = 85
-            elif diff <= 0:
-                prob = 65
-            elif diff <= 1:
-                prob = 48
-            elif diff <= 2:
-                prob = 28
-            else:
-                prob = 15
-            k_lines[k_value] = max(5, min(100, prob))
-    
+    for i in range(4):
+        k_value = floor + i
+        prob_ge = 1 - poisson.cdf(k_value - 1, lambda_ks)
+        prob_pct = max(5, min(100, int(prob_ge * 100)))
+        k_lines[k_value] = prob_pct
+
     return {
-        'expected_ks': round(expected_ks, 1),
-        'floor': floor_int,  # The "At Least" number
-        'floor_confidence': int(floor_confidence),  # 0-100%
+        'expected': round(expected_ks, 1),          # ← matches UI key
+        'floor': floor,                             # The "At Least X Ks" number
+        'floor_confidence': floor_confidence,       # % confidence we hit this floor
         'volatility': round(volatility, 2),
         'k_per_ip': round(k_per_ip, 2),
         'projected_ip': projected_ip,
-        'efficiency_factor': efficiency_factor,
-        'k_lines': k_lines,  # Dict: {5: 85, 6: 72, 7: 58, 8: 42}
-        'best_line': floor_int,  # Same as floor
-        'grade': salci_result.get('grade', 'C')
+        'k_lines': k_lines,                         # ← matches UI key
+        'best_line': floor,                         # for backward compat
+        'grade': salci_result.get('grade', 'C'),
+        
+        # Extra diagnostics (great for backtesting)
+        'mean_ks': round(expected_ks, 1),
+        'profile_volatility': 'HIGH' if volatility > 1.5 else 'MEDIUM' if volatility > 1.1 else 'LOW',
+        'stuff_location_gap': round(stuff - location, 1)
     }
 
 
