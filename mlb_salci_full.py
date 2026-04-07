@@ -1287,7 +1287,7 @@ def create_k_projection_chart(pitcher_results: List[Dict]) -> Optional[go.Figure
 # UI Rendering Functions
 # ----------------------------
 def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
-    """Render pitcher card with SALCI v3 component breakdown."""
+    """Render pitcher card with SALCI v3 component breakdown + new At Least Ks floor."""
     salci = result["salci"]
     rating_label, emoji, css_class = get_rating(salci)
     
@@ -1324,10 +1324,20 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                        unsafe_allow_html=True)
 
         with col3:
-            expected_data = calculate_expected_ks_v3(...)
-            st.markdown(f"**Expected Ks:** {expected_data['expected']}")
-            st.markdown(f"**At Least:** <span style='color:#10b981; font-weight:bold;'>{expected_data['floor']} Ks</span> "
-            f"({expected_data['floor_confidence']}% confidence)", unsafe_allow_html=True)
+            # NEW: Pull from the updated calculate_expected_ks_v3 output
+            expected_ks = result.get("expected", "--")
+            floor_ks = result.get("floor")
+            floor_conf = result.get("floor_confidence")
+            
+            st.markdown(f"**Expected Ks:** {expected_ks}")
+            
+            if floor_ks is not None and floor_conf is not None:
+                st.markdown(f"**At Least:** <span style='color:#10b981; font-weight:bold;'>{floor_ks} Ks</span> "
+                           f"({floor_conf}% confidence)", unsafe_allow_html=True)
+            else:
+                st.markdown("**At Least:** --")
+            
+            # K-lines (now correctly populated with "At Least" Poisson probabilities)
             k_lines = result.get("k_lines", {}) or result.get("lines", {})
             if k_lines:
                 cols = st.columns(4)
@@ -1337,6 +1347,7 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         st.markdown(f"<div style='text-align:center;'><small>{k_value}+</small><br>"
                                    f"<span style='color:{color}; font-weight:bold;'>{prob}%</span></div>",
                                     unsafe_allow_html=True)
+
 
         # v5.1: SALCI v3 4-Component Breakdown
         if show_stuff_location:
@@ -1437,7 +1448,7 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                 
                 st.markdown("</div>", unsafe_allow_html=True)
                 
-                # Arsenal display (now fixed)
+                # Arsenal display (already fixed in previous step)
                 stuff_breakdown = result.get("stuff_breakdown", {})
                 if stuff_breakdown and result.get("is_statcast"):
                     render_arsenal_display(stuff_breakdown)
