@@ -1672,50 +1672,334 @@ def main():
             fig=create_stuff_location_chart(conf_p)
             if fig: st.plotly_chart(fig,use_container_width=True)
 
-    # =========================================================
-    # TAB 6: Yesterday
-    # =========================================================
+    # ======================
+    # TAB 6: Yesterday's Reflection
+    # ======================
     with tab6:
         st.markdown("### 📈 Yesterday's Reflection")
-        yd = get_yesterday_date()
-        st.markdown(f"**Analyzing:** {(datetime.today()-timedelta(days=1)).strftime('%A, %B %d')}")
+        st.markdown("Compare SALCI predictions against actual box-score results.")
         st.markdown("---")
-        if REFLECTION_AVAILABLE:
-            c1,c2=st.columns(2)
-            with c1:
-                st.markdown("##### ⚾ Yesterday's Notable Performers")
-                yact=get_yesterday_hitter_leaders(yd,min_hits=2)
-                st.info(f"Found {len(yact)} notable performances") if yact else st.warning("No completed games data")
-            with c2:
-                st.markdown("##### 📥 Save Today's Predictions")
-                if st.button("Save Current Predictions for Tomorrow",use_container_width=True):
-                    if save_predictions_with_reflection(date_str,all_pitcher_results,all_hitter_results):
-                        st.rerun()
-        else:
-            st.warning("⚠️ Reflection module not available.")
 
-    # =========================================================
+        if not REFLECTION_AVAILABLE:
+            st.error("❌ `reflection.py` not found. Place it alongside `mlb_salci_full.py` and restart.")
+        else:
+            # ── Date selector (default = yesterday) ──────────────────────────────
+            yesterday_dt  = datetime.today() - timedelta(days=1)
+            reflect_date  = st.date_input(
+                "📅 Analyze date",
+                value=yesterday_dt,
+                max_value=yesterday_dt,
+                min_value=yesterday_dt - timedelta(days=30),
+                key="reflect_date_picker",
+            )
+            reflect_str = reflect_date.strftime("%Y-%m-%d")
+
+            # ── Step 1: Save today's predictions ─────────────────────────────────
+            with st.expander("📥 Step 1 — Save today's predictions (do this BEFORE games start)", expanded=False):
+                st.markdown(
+                    "Saving locks in your SALCI scores and K projections so they can be "
+                    "compared against actual box scores after games finish."
+                )
+                today_str = date_str  # from main() scope
+                existing_preds = refl.load_daily_predictions(today_str)
+                if existing_preds:
+                    saved_at = existing_preds.get("saved_at", "unknown time")
+                    st.success(f"✅ Predictions already saved for **{today_str}** at {saved_at[:19]}")
+                    st.caption(f"{len(existing_preds.get('pitchers', []))} pitchers · "
+                               f"{len(existing_preds.get('hitters', []))} hitters stored")
+                    if st.button("🔄 Overwrite with current predictions", key="overwrite_preds"):
+                        save_predictions_with_reflection(today_str, all_pitcher_results, all_hitter_results)
+                else:
+                    if st.button("💾 Save today's predictions now", use_container_width=True, key="save_preds_btn"):
+                        save_predictions_with_reflection(today_str, all_pitcher_results, all_hitter_results)
+
+            st.markdown("---")
+
+            # ── Step 2: Collect results & generate reflection ─────────────────────
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button(f"🔄 Collect results & generate reflection for {reflect_str}",
+                             use_container_width=True, key="collect_results_btn"):
+                    with st.spinner("Fetching MLB box scores…"):
+                        reflection_data = refl.collect_and_reflect_date(reflect_str, force=True)
+                    if reflection_data:
+                        st.success("✅ Reflection generated successfully!")
+                    else:
+                        preds_exist = refl.load_daily_predictions(reflect_str) is not None
+                        if not preds_exist:
+                            st.warning(f"⚠️ No saved predictions found for {reflect_str}. "
+                                       f"You need to save predictions before games start.")
+                        else:
+                            st.warning("⚠️ No completed games found for that date yet. "
+                                       "Try again after games finish.")
+            with col_btn2:
+                existing_ref = refl.load_reflection(reflect_str)
+                if existing_ref:
+                    gen_at = existing_ref.get("generated_at", "")[:19]
+                    st.info(f"📂 Reflection cached from {gen_at}")
+
+            # ── Load & display reflection ─────────────────────────────────────────
+            reflection_data = refl.load_reflection(reflect_str)
+
+            if not reflection_data:
+                st.info(
+                    f"No reflection data for **{reflect_str}** yet.\n\n"
+                    "**To get started:**\n"
+                    "1. Use Step 1 above to save predictions before today's games\n"
+                    "2. Come back after games complete and click 'Collect results'\n"
+                    "3. The model will compare your SALCI projections to actual box scores"
+                )
+            else:
+                rf = reflection_data
+                n  = rf.get("games_tracked", 0)
+
+                # ── Headline metrics ──────────────────────────────────────────────
+                st.markdown(f"#### 📊 {reflect_date.strftime('%A, %B %d')} — {n} starters tracked")
+
+                m1, m2, m3, m4, m5 = st.columns(5)
+                acc = rf.get("accuracy_pct", 0)
+                delta = rf.get("avg_k_delta", 0)
+                mae   = rf.get("mae", 0)
+
+                m1.metric("✅ Hit Rate",        f"{acc:.1f}%",
+                          help="Projections within ±1.5 Ks of actual")
+                m2.metric("📈 Avg Projected Ks", f"{rf.get('avg_predicted_ks', 0):.1f}")
+                m3.metric("📊 Avg Actual Ks",    f"{rf.get('avg_actual_ks', 0):.1f}")
+                m4.metric("⚖️ Avg K Delta",      f"{delta:+.2f}",
+                          delta_color="inverse",
+                          help="Positive = model ran LOW (actual > projected)")
+                m5.metric("📐 MAE",              f"{mae:.2f} Ks",
+                          help="Mean absolute error across all starters")
+
+                # Hit / Over / Under breakdown
+                h_count = rf.get("hits",  0)
+                o_count = rf.get("overs", 0)
+                u_count = rf.get("unders",0)
+                st.markdown(
+                    f"<div style='display:flex;gap:1rem;margin:0.5rem 0;'>"
+                    f"<span style='background:#10b981;color:white;padding:0.2rem 0.8rem;border-radius:8px;'>✅ HIT: {h_count}</span>"
+                    f"<span style='background:#3b82f6;color:white;padding:0.2rem 0.8rem;border-radius:8px;'>📈 OVER: {o_count} ({rf.get('over_pct',0):.0f}%)</span>"
+                    f"<span style='background:#f97316;color:white;padding:0.2rem 0.8rem;border-radius:8px;'>📉 UNDER: {u_count} ({rf.get('under_pct',0):.0f}%)</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+                # ── Lesson / Insight ──────────────────────────────────────────────
+                if rf.get("lesson"):
+                    st.info(f"💡 **Insight:** {rf['lesson']}")
+
+                st.markdown("---")
+
+                # ── Over / Under performer columns ────────────────────────────────
+                col_o, col_u = st.columns(2)
+
+                with col_o:
+                    st.markdown("#### 🔥 Overperformers")
+                    overs_list = rf.get("overperformers", [])
+                    if overs_list:
+                        for p in overs_list:
+                            salci_str = f"SALCI {p['salci']:.0f}" if p.get("salci") else ""
+                            st.markdown(
+                                f"<div style='background:#d1fae5;border-left:4px solid #10b981;"
+                                f"border-radius:6px;padding:0.6rem 1rem;margin-bottom:0.4rem;'>"
+                                f"<strong>{p['name']}</strong> · {p.get('team','')}"
+                                f"{'  ·  ' + salci_str if salci_str else ''}<br>"
+                                f"Projected <strong>{p['predicted']:.1f}</strong> → "
+                                f"Actual <strong>{p['actual']}</strong> "
+                                f"<span style='color:#10b981;font-weight:bold;'>(+{p['delta']:.1f} Ks)</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+                    else:
+                        st.caption("No pitchers exceeded projection by more than 1.5 Ks.")
+
+                with col_u:
+                    st.markdown("#### ❄️ Underperformers")
+                    unders_list = rf.get("underperformers", [])
+                    if unders_list:
+                        for p in unders_list:
+                            salci_str = f"SALCI {p['salci']:.0f}" if p.get("salci") else ""
+                            st.markdown(
+                                f"<div style='background:#fee2e2;border-left:4px solid #ef4444;"
+                                f"border-radius:6px;padding:0.6rem 1rem;margin-bottom:0.4rem;'>"
+                                f"<strong>{p['name']}</strong> · {p.get('team','')}"
+                                f"{'  ·  ' + salci_str if salci_str else ''}<br>"
+                                f"Projected <strong>{p['predicted']:.1f}</strong> → "
+                                f"Actual <strong>{p['actual']}</strong> "
+                                f"<span style='color:#ef4444;font-weight:bold;'>({p['delta']:+.1f} Ks)</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+                    else:
+                        st.caption("No pitchers missed projection by more than 1.5 Ks.")
+
+                # ── Full comparison table ─────────────────────────────────────────
+                st.markdown("---")
+                st.markdown("#### 📋 Full Comparison Table")
+
+                comparisons = rf.get("comparisons", [])
+                if comparisons:
+                    rows = []
+                    for c in sorted(comparisons, key=lambda x: abs(x["k_delta"]), reverse=True):
+                        acc_icon = "✅" if c["k_accuracy"] == "HIT" else "📈" if c["k_accuracy"] == "OVER" else "📉"
+                        rows.append({
+                            "Pitcher":     c["pitcher_name"],
+                            "Team":        c.get("team", ""),
+                            "SALCI":       f"{c['predicted_salci']:.1f}" if c.get("predicted_salci") else "—",
+                            "Projected K": f"{c['predicted_ks']:.1f}",
+                            "Actual K":    str(c["actual_ks"]),
+                            "Delta":       f"{c['k_delta']:+.1f}",
+                            "IP":          f"{c['actual_ip']:.1f}",
+                            "Result":      f"{acc_icon} {c['k_accuracy']}",
+                        })
+                    st.dataframe(
+                        pd.DataFrame(rows),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Delta": st.column_config.TextColumn("Δ Ks"),
+                            "Result": st.column_config.TextColumn("Result"),
+                        }
+                    )
+                else:
+                    st.info("No individual comparison data available.")
+
+                # ── Profile accuracy breakdown ────────────────────────────────────
+                stuff_acc = rf.get("stuff_heavy_accuracy")
+                loc_acc   = rf.get("location_heavy_accuracy")
+                if stuff_acc is not None or loc_acc is not None:
+                    st.markdown("---")
+                    st.markdown("#### 🧪 Profile Accuracy")
+                    pa1, pa2 = st.columns(2)
+                    if stuff_acc is not None:
+                        pa1.metric("🔥 Stuff-Heavy Pitchers", f"{stuff_acc*100:.0f}% hit rate")
+                    if loc_acc is not None:
+                        pa2.metric("🎯 Location-Heavy Pitchers", f"{loc_acc*100:.0f}% hit rate")
+
+
+    # ======================
     # TAB 7: Model Accuracy
-    # =========================================================
+    # ======================
     with tab7:
         st.markdown("### 🎯 SALCI Model Accuracy Dashboard")
+        st.markdown("Rolling accuracy metrics built from saved reflections.")
         st.markdown("---")
-        if REFLECTION_AVAILABLE:
-            try:
-                ra=refl.get_rolling_accuracy(7)
-                if ra:
-                    c1,c2,c3,c4=st.columns(4)
-                    c1.metric("7-Day Accuracy",  f"{ra.get('accuracy_pct',0):.1f}%")
-                    c2.metric("Avg K Delta",      f"{ra.get('avg_k_delta',0):.2f}")
-                    bias=ra.get("avg_k_delta",0)
-                    c3.metric("Bias",             f"{'+' if bias>0 else ''}{bias:.1f}")
-                    c4.metric("Sample Size",      ra.get("games_analyzed",0))
-                else:
-                    st.info("No historical accuracy data yet.")
-            except Exception as e:
-                st.warning(f"Could not load accuracy data: {e}")
+
+        if not REFLECTION_AVAILABLE:
+            st.error("❌ `reflection.py` not found.")
         else:
-            st.warning("⚠️ Reflection module not available.")
+            window = st.radio("Lookback window", ["7 days", "14 days", "30 days"],
+                              horizontal=True, key="accuracy_window")
+            days_map = {"7 days": 7, "14 days": 14, "30 days": 30}
+            n_days   = days_map[window]
+
+            ra = refl.get_rolling_accuracy(n_days)
+
+            if ra.get("games_analyzed", 0) == 0:
+                st.info(
+                    f"No accuracy data for the past {n_days} days yet.\n\n"
+                    "**How to build history:**\n"
+                    "1. Save predictions every day before games start (Tab 6 → Step 1)\n"
+                    "2. Collect results each evening (Tab 6 → 'Collect results')\n"
+                    "3. Accuracy will accumulate here automatically"
+                )
+            else:
+                # ── Top-line metrics ──────────────────────────────────────────────
+                st.markdown(f"#### Last {n_days} days — {ra['games_analyzed']} pitcher-games")
+
+                tendency_color = {"OVER": "#3b82f6", "UNDER": "#f97316", "CALIBRATED": "#10b981"}.get(
+                    ra.get("tendency", "CALIBRATED"), "#6b7280"
+                )
+                tendency_label = {
+                    "OVER":       "📈 Running LOW — model under-projects Ks",
+                    "UNDER":      "📉 Running HIGH — model over-projects Ks",
+                    "CALIBRATED": "⚖️ Well calibrated",
+                }.get(ra.get("tendency", "CALIBRATED"), "")
+
+                st.markdown(
+                    f"<div style='background:{tendency_color}22;border:1px solid {tendency_color};"
+                    f"border-radius:8px;padding:0.6rem 1rem;margin-bottom:1rem;'>"
+                    f"<strong style='color:{tendency_color};'>{tendency_label}</strong></div>",
+                    unsafe_allow_html=True
+                )
+
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("✅ Hit Rate",       f"{ra['accuracy_pct']:.1f}%",
+                          help="% of projections within ±1.5 Ks")
+                c2.metric("📐 MAE",            f"{ra['mae']:.2f} Ks",
+                          help="Mean absolute error across all starters")
+                c3.metric("⚖️ Avg Δ",         f"{ra['avg_k_delta']:+.2f} Ks",
+                          delta_color="inverse",
+                          help="+ means model ran LOW (actual > projected)")
+                c4.metric("📈 Over %",         f"{ra['over_pct']:.0f}%")
+                c5.metric("📉 Under %",        f"{ra['under_pct']:.0f}%")
+
+                st.caption(f"Based on {ra['days_analyzed']} days with data out of last {n_days} days.")
+
+                # ── Day-by-day chart ──────────────────────────────────────────────
+                daily = ra.get("daily", [])
+                if len(daily) >= 2:
+                    st.markdown("---")
+                    st.markdown("#### 📈 Daily Accuracy Trend")
+
+                    import plotly.graph_objects as go
+                    from plotly.subplots import make_subplots
+
+                    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+                    fig.add_trace(go.Bar(
+                        x=[d["date"] for d in daily],
+                        y=[d["accuracy_pct"] for d in daily],
+                        name="Hit Rate %",
+                        marker_color="#10b981",
+                        opacity=0.7,
+                    ), secondary_y=False)
+
+                    fig.add_trace(go.Scatter(
+                        x=[d["date"] for d in daily],
+                        y=[d["avg_k_delta"] for d in daily],
+                        name="Avg Δ Ks",
+                        mode="lines+markers",
+                        line=dict(color="#3b82f6", width=2),
+                        marker=dict(size=6),
+                    ), secondary_y=True)
+
+                    fig.add_hline(y=0,   line_dash="dot", line_color="#6b7280",
+                                  secondary_y=True, annotation_text="Zero bias")
+                    fig.add_hline(y=70,  line_dash="dash", line_color="#10b981",
+                                  secondary_y=False, annotation_text="70% target")
+
+                    fig.update_layout(
+                        height=350,
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        margin=dict(l=40, r=40, t=40, b=40),
+                    )
+                    fig.update_yaxes(title_text="Hit Rate %",   range=[0, 100], secondary_y=False)
+                    fig.update_yaxes(title_text="Avg K Delta",  secondary_y=True)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # ── Day-by-day table ──────────────────────────────────────────────
+                if daily:
+                    st.markdown("---")
+                    st.markdown("#### 📋 Day-by-Day Summary")
+                    df_daily = pd.DataFrame([{
+                        "Date":        d["date"],
+                        "Games":       d["games"],
+                        "Hit Rate":    f"{d['accuracy_pct']:.1f}%",
+                        "Avg Δ Ks":    f"{d['avg_k_delta']:+.2f}",
+                        "MAE":         f"{d['mae']:.2f}",
+                    } for d in reversed(daily)])
+                    st.dataframe(df_daily, use_container_width=True, hide_index=True)
+
+                # ── Instructions if sparse data ───────────────────────────────────
+                if ra["days_analyzed"] < 3:
+                    st.markdown("---")
+                    st.info(
+                        f"📊 Only **{ra['days_analyzed']} day(s)** of data so far. "
+                        "Save predictions daily for at least a week to see meaningful trends."
+                    )
 
 
 if __name__ == "__main__":
