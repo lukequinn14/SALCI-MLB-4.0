@@ -1190,6 +1190,18 @@ def main():
 **SALCI v3 Weights:** Stuff 40% · Matchup 25% · Workload 20% · Location 15%
             """)
 
+
+        st.markdown("---")
+        st.markdown("### 🔒 SALCI Pro")
+        if is_pro():
+            st.success("🔓 Pro access active")
+        else:
+            st.text_input("Patreon password", type="password",
+                          key="pro_password",
+                          placeholder="Enter your password")
+            st.caption("[Get Pro access →](https://patreon.com/YOURPAGE)")
+            st.caption("Pro unlocks: K-lines, floor, Stuff+, arsenal, matchup scores")
+
     # ── Setup ────────────────────────────────────────────────────────────────
     date_str       = selected_date.strftime("%Y-%m-%d")
     weights        = WEIGHT_PRESETS[preset_key]["weights"]
@@ -1224,160 +1236,227 @@ def main():
     else:
         st.info(f"✅ **{confirmed_count} games** have confirmed lineups")
 
+    # =========================================================
+    # DATA LOADING — Smart JSON loader (pre-computed files)
+    # Falls back to live computation if no JSON found today
+    # =========================================================
+    from data_loader import (
+        load_todays_data, get_pitchers, source_banner,
+        confirmed_lineup_count, strip_pro_fields, check_pro_password,
+        PRO_FIELDS
+    )
+
+    # ── Pro gate (session state persists across reruns) ───────────────
+    def is_pro() -> bool:
+        return check_pro_password(st.session_state.get("pro_password", ""))
+
+    precomputed_data, data_source = load_todays_data(date_str)
+
     all_pitcher_results: List[Dict] = []
     all_hitter_results:  List[Dict] = []
-    progress = st.progress(0)
 
-    for i, game in enumerate(games):
-        progress.progress((i+1)/len(games))
-        gpk  = game["game_pk"]
-        glu  = lineup_status[gpk]
+    if precomputed_data is not None:
+        # ── Fast path: read pre-computed JSON ─────────────────────────
+        all_pitcher_results = get_pitchers(precomputed_data)
 
-        for side in ["home","away"]:
-            pitcher      = game.get(f"{side}_pitcher","TBD")
-            pid          = game.get(f"{side}_pid")
-            pitcher_hand = game.get(f"{side}_pitcher_hand","R")
-            team         = game.get(f"{side}_team")
-            opp          = game.get("away_team" if side=="home" else "home_team")
-            opp_id       = game.get("away_team_id" if side=="home" else "home_team_id")
-            opp_side     = "away" if side=="home" else "home"
-            if not pid or pitcher=="TBD": continue
+        banner_msg, banner_level = source_banner(precomputed_data, data_source)
+        if banner_level == "success":
+            st.success(banner_msg)
+        elif banner_level == "info":
+            st.info(banner_msg)
+        else:
+            st.warning(banner_msg)
 
-            p_recent    = get_recent_pitcher_stats(pid, 7)
-            p_baseline  = parse_season_stats(get_player_season_stats(pid, current_season))
-            opp_recent  = get_team_batting_stats(opp_id, 14)
-            opp_baseline= get_team_season_batting(opp_id, current_season)
-            games_played= (p_recent or {}).get("games_sampled",0)
+        # Pull hitter results from stored lineup data (if final file has them)
+        if show_hitters:
+            for p in all_pitcher_results:
+                if not p.get("lineup_confirmed") or not p.get("lineup"):
+                    continue
+                for player in p.get("lineup", []):
+                    h_recent = get_hitter_recent_stats(player["id"], 7)
+                    h_season = get_hitter_season_stats(player["id"], current_season)
+                    if h_recent:
+                        h_score = compute_hitter_score(h_recent)
+                        if not hot_hitters_only or h_score >= 60:
+                            entry: Dict = {
+                                "name":          player["name"],
+                                "player_id":     player["id"],
+                                "position":      player.get("position", ""),
+                                "batting_order": player.get("batting_order"),
+                                "bat_side":      player.get("bat_side", "R"),
+                                "team":          p.get("opponent", ""),
+                                "vs_pitcher":    p.get("pitcher", p.get("pitcher_name", "")),
+                                "pitcher_hand":  p.get("pitcher_hand", "R"),
+                                "pitcher_k_pct": p.get("pitcher_k_pct", 0.22),
+                                "pitcher_avg_against": p.get("pitcher_avg_against", LEAGUE_AVG_2025),
+                                "game_pk":       p.get("game_pk"),
+                                "recent":        h_recent,
+                                "season":        h_season or {},
+                                "score":         h_score,
+                                "lineup_confirmed": p.get("lineup_confirmed", False),
+                                "xba": None, "avg_exit_velo": None,
+                                "avg_launch_angle": None, "barrel_pct": None,
+                                "hard_hit_pct": None, "hard_hit_pct_l14": None,
+                                "hit_prob_score": None, "hit_prob_breakdown": {},
+                            }
+                            if HIT_LIKELIHOOD_AVAILABLE:
+                                try:
+                                    bs = _build_batter_stats_for_log5(entry, h_season or {})
+                                    ps = {"avg_against": p.get("pitcher_avg_against", LEAGUE_AVG_2025),
+                                          "pitcher_hand": p.get("pitcher_hand", "R")}
+                                    hs_val, hs_bd = calculate_hitter_hit_prob(bs, ps, league_avg=LEAGUE_AVG_2025)
+                                    entry["hit_prob_score"]     = hs_val
+                                    entry["hit_prob_breakdown"] = hs_bd
+                                except Exception:
+                                    pass
+                            all_hitter_results.append(entry)
 
-            # Blended avg_against for Log5
-            r_aa = (p_recent   or {}).get("avg_against", LEAGUE_AVG_2025)
-            b_aa = (p_baseline or {}).get("avg_against", LEAGUE_AVG_2025)
-            blended_aa = r_aa*0.6 + b_aa*0.4
+    else:
+        # ── Slow path: live computation (no JSON found for today) ──────
+        st.warning("⚠️ No pre-computed data found for today — running live calculations. This may take 30–60 seconds.")
 
-            # Combined pitcher stats
-            cs = {}
-            if p_recent:   cs.update(p_recent)
-            if p_baseline:
-                for k in ["K9","K_percent","K/BB","P/IP"]:
-                    if k in p_baseline and k in cs: cs[k] = cs[k]*0.6+p_baseline[k]*0.4
-                    elif k in p_baseline:           cs[k] = p_baseline[k]
-            opp_s = {}
-            if opp_recent:   opp_s.update(opp_recent)
-            if opp_baseline:
-                for k in ["OppK%","OppContact%"]:
-                    if k in opp_baseline and k in opp_s: opp_s[k] = opp_s[k]*0.6+opp_baseline[k]*0.4
-                    elif k in opp_baseline:              opp_s[k] = opp_baseline[k]
+        progress = st.progress(0)
 
-            stuff_sc=loc_sc=match_sc=work_sc=None; sb_={}; pt_="BALANCED"; pdc_=""; sg_="C"; isc=False; sv3=None
+        for i, game in enumerate(games):
+            progress.progress((i+1)/len(games))
+            gpk  = game["game_pk"]
+            glu  = lineup_status[gpk]
 
-            if SALCI_V3_AVAILABLE and STATCAST_AVAILABLE:
-                try:
-                    prof = get_pitcher_statcast_profile(pid, days=30)
-                    if prof:
-                        stuff_sc=prof.get("stuff_plus",100); loc_sc=prof.get("location_plus",100)
-                        sb_=prof.get("by_pitch_type",{}); pt_=prof.get("profile_type","BALANCED")
-                        pdc_=prof.get("profile_description","")
-                        avg_ip=(p_recent or {}).get("avg_ip_per_start",5.5)
-                        work_sc,_=calculate_workload_score_v3({"P/IP":cs.get("P/IP",16.0),"avg_ip":avg_ip})
-                        ol_info=glu[opp_side]; lhs=None
-                        if ol_info.get("confirmed") and ol_info.get("lineup"):
-                            lhs=[]
-                            for pl_ in ol_info["lineup"]:
-                                hr_=get_hitter_recent_stats(pl_["id"],7)
-                                if hr_: lhs.append({"name":pl_["name"],"k_rate":hr_.get("k_rate",0.22),
-                                    "zone_contact_pct":1-hr_.get("k_rate",0.22)*0.8,"bat_side":pl_.get("bat_side","R")})
-                        match_sc,_=calculate_matchup_score_v3(opp_s,lhs,pitcher_hand)
-                        sv3=calculate_salci_v3(stuff_sc,loc_sc,match_sc,work_sc)
-                        sg_=sv3.get("grade","C"); isc=True
-                except Exception as e:
-                    st.warning(f"SALCI v3 error for {pitcher}: {e}")
+            for side in ["home","away"]:
+                pitcher      = game.get(f"{side}_pitcher","TBD")
+                pid          = game.get(f"{side}_pid")
+                pitcher_hand = game.get(f"{side}_pitcher_hand","R")
+                team         = game.get(f"{side}_team")
+                opp          = game.get("away_team" if side=="home" else "home_team")
+                opp_id       = game.get("away_team_id" if side=="home" else "home_team_id")
+                opp_side     = "away" if side=="home" else "home"
+                if not pid or pitcher=="TBD": continue
 
-            if sv3:
-                salci=sv3["salci"]
-                proj=calculate_expected_ks_v3(sv3,(p_recent or {}).get("avg_ip_per_start",5.5))
-                all_pitcher_results.append({
-                    "pitcher":pitcher,"pitcher_id":pid,"pitcher_hand":pitcher_hand,
-                    "pitcher_k_pct":(p_baseline or p_recent or {}).get("K_percent",0.22),
-                    "pitcher_avg_against":blended_aa,
-                    "team":team,"opponent":opp,"opponent_id":opp_id,"game_pk":gpk,
-                    "salci":salci,"salci_grade":sg_,
-                    "expected":proj.get("expected_ks",proj.get("expected",5)),
-                    "k_lines":proj.get("k_lines",{}),"lines":proj.get("k_lines",{}),
-                    "best_line":proj.get("best_line",5),"breakdown":{},
-                    "lineup_confirmed":glu[opp_side]["confirmed"],
-                    "floor":proj.get("floor",5),"floor_confidence":proj.get("floor_confidence",70),
-                    "volatility":proj.get("volatility",1.2),
-                    "stuff_score":stuff_sc,"location_score":loc_sc,
-                    "matchup_score":match_sc,"workload_score":work_sc,
-                    "stuff_breakdown":sb_,"profile_type":pt_,"profile_desc":pdc_,
-                    "is_statcast":isc,"k_per_ip":proj.get("k_per_ip"),
-                    "projected_ip":proj.get("projected_ip"),
-                })
-            else:
-                salci,bd_,_=compute_salci(p_recent,p_baseline,opp_recent,opp_baseline,weights,games_played)
-                if salci is not None:
-                    base_k9=(p_baseline or p_recent or {}).get("K9",9.0)
-                    proj=project_lines(salci,base_k9)
+                p_recent    = get_recent_pitcher_stats(pid, 7)
+                p_baseline  = parse_season_stats(get_player_season_stats(pid, current_season))
+                opp_recent  = get_team_batting_stats(opp_id, 14)
+                opp_baseline= get_team_season_batting(opp_id, current_season)
+                games_played= (p_recent or {}).get("games_sampled",0)
+
+                r_aa = (p_recent   or {}).get("avg_against", LEAGUE_AVG_2025)
+                b_aa = (p_baseline or {}).get("avg_against", LEAGUE_AVG_2025)
+                blended_aa = r_aa*0.6 + b_aa*0.4
+
+                cs = {}
+                if p_recent:   cs.update(p_recent)
+                if p_baseline:
+                    for k in ["K9","K_percent","K/BB","P/IP"]:
+                        if k in p_baseline and k in cs: cs[k] = cs[k]*0.6+p_baseline[k]*0.4
+                        elif k in p_baseline:           cs[k] = p_baseline[k]
+                opp_s = {}
+                if opp_recent:   opp_s.update(opp_recent)
+                if opp_baseline:
+                    for k in ["OppK%","OppContact%"]:
+                        if k in opp_baseline and k in opp_s: opp_s[k] = opp_s[k]*0.6+opp_baseline[k]*0.4
+                        elif k in opp_baseline:              opp_s[k] = opp_baseline[k]
+
+                stuff_sc=loc_sc=match_sc=work_sc=None; sb_={}; pt_="BALANCED"; pdc_=""; sg_="C"; isc=False; sv3=None
+
+                if SALCI_V3_AVAILABLE and STATCAST_AVAILABLE:
+                    try:
+                        prof = get_pitcher_statcast_profile(pid, days=30)
+                        if prof:
+                            stuff_sc=prof.get("stuff_plus",100); loc_sc=prof.get("location_plus",100)
+                            sb_=prof.get("by_pitch_type",{}); pt_=prof.get("profile_type","BALANCED")
+                            pdc_=prof.get("profile_description","")
+                            avg_ip=(p_recent or {}).get("avg_ip_per_start",5.5)
+                            work_sc,_=calculate_workload_score_v3({"P/IP":cs.get("P/IP",16.0),"avg_ip":avg_ip})
+                            ol_info=glu[opp_side]; lhs=None
+                            if ol_info.get("confirmed") and ol_info.get("lineup"):
+                                lhs=[]
+                                for pl_ in ol_info["lineup"]:
+                                    hr_=get_hitter_recent_stats(pl_["id"],7)
+                                    if hr_: lhs.append({"name":pl_["name"],"k_rate":hr_.get("k_rate",0.22),
+                                        "zone_contact_pct":1-hr_.get("k_rate",0.22)*0.8,"bat_side":pl_.get("bat_side","R")})
+                            match_sc,_=calculate_matchup_score_v3(opp_s,lhs,pitcher_hand)
+                            sv3=calculate_salci_v3(stuff_sc,loc_sc,match_sc,work_sc)
+                            sg_=sv3.get("grade","C"); isc=True
+                    except Exception as e:
+                        st.warning(f"SALCI v3 error for {pitcher}: {e}")
+
+                if sv3:
+                    salci=sv3["salci"]
+                    proj=calculate_expected_ks_v3(sv3,(p_recent or {}).get("avg_ip_per_start",5.5))
                     all_pitcher_results.append({
-                        "pitcher":pitcher,"pitcher_id":pid,"pitcher_hand":pitcher_hand,
+                        "pitcher":pitcher,"pitcher_name":pitcher,"pitcher_id":pid,
+                        "pitcher_hand":pitcher_hand,
                         "pitcher_k_pct":(p_baseline or p_recent or {}).get("K_percent",0.22),
                         "pitcher_avg_against":blended_aa,
                         "team":team,"opponent":opp,"opponent_id":opp_id,"game_pk":gpk,
-                        "salci":salci,"salci_grade":get_rating(salci)[0][0] if salci>=75 else "C",
-                        "expected":proj["expected"],"k_lines":proj["lines"],"lines":proj["lines"],
-                        "best_line":max(k for k,v in proj["lines"].items() if v>=50) if proj["lines"] else 5,
-                        "breakdown":bd_,"lineup_confirmed":glu[opp_side]["confirmed"],
-                        "is_statcast":False,"stuff_score":None,"location_score":None,"profile_type":"N/A",
+                        "salci":salci,"salci_grade":sg_,
+                        "expected":proj.get("expected_ks",proj.get("expected",5)),
+                        "k_lines":proj.get("k_lines",{}),"lines":proj.get("k_lines",{}),
+                        "best_line":proj.get("best_line",5),"breakdown":{},
+                        "lineup_confirmed":glu[opp_side]["confirmed"],
+                        "floor":proj.get("floor",5),"floor_confidence":proj.get("floor_confidence",70),
+                        "volatility":proj.get("volatility",1.2),
+                        "stuff_score":stuff_sc,"location_score":loc_sc,
+                        "matchup_score":match_sc,"workload_score":work_sc,
+                        "stuff_breakdown":sb_,"profile_type":pt_,"profile_desc":pdc_,
+                        "is_statcast":isc,"k_per_ip":proj.get("k_per_ip"),
+                        "projected_ip":proj.get("projected_ip"),
                     })
+                else:
+                    salci,bd_,_=compute_salci(p_recent,p_baseline,opp_recent,opp_baseline,weights,games_played)
+                    if salci is not None:
+                        base_k9=(p_baseline or p_recent or {}).get("K9",9.0)
+                        proj=project_lines(salci,base_k9)
+                        all_pitcher_results.append({
+                            "pitcher":pitcher,"pitcher_name":pitcher,"pitcher_id":pid,
+                            "pitcher_hand":pitcher_hand,
+                            "pitcher_k_pct":(p_baseline or p_recent or {}).get("K_percent",0.22),
+                            "pitcher_avg_against":blended_aa,
+                            "team":team,"opponent":opp,"opponent_id":opp_id,"game_pk":gpk,
+                            "salci":salci,"salci_grade":get_rating(salci)[0][0] if salci>=75 else "C",
+                            "expected":proj["expected"],"k_lines":proj["lines"],"lines":proj["lines"],
+                            "best_line":max(k for k,v in proj["lines"].items() if v>=50) if proj["lines"] else 5,
+                            "breakdown":bd_,"lineup_confirmed":glu[opp_side]["confirmed"],
+                            "is_statcast":False,"stuff_score":None,"location_score":None,"profile_type":"N/A",
+                        })
 
-            # ── Hitter processing ── ← UPDATED v5.2
-            if show_hitters:
-                ol_info = glu[opp_side]
-                if ol_info["confirmed"] or not confirmed_only:
-                    for pl_ in ol_info["lineup"]:
-                        hr_ = get_hitter_recent_stats(pl_["id"],7)
-                        hs_ = get_hitter_season_stats(pl_["id"],current_season)
-                        if hr_:
-                            h_score = compute_hitter_score(hr_)
-                            if not hot_hitters_only or h_score >= 60:
-                                entry: Dict = {
-                                    "name":          pl_["name"],
-                                    "player_id":     pl_["id"],
-                                    "position":      pl_["position"],
-                                    "batting_order": pl_["batting_order"],
-                                    "bat_side":      pl_["bat_side"],
-                                    "team":          opp,
-                                    "vs_pitcher":    pitcher,
-                                    "pitcher_hand":  pitcher_hand,
-                                    "pitcher_k_pct": (p_baseline or p_recent or {}).get("K_percent",0.22),
-                                    "pitcher_avg_against": blended_aa,
-                                    "game_pk":       gpk,
-                                    "recent":        hr_,
-                                    "season":        hs_ or {},
-                                    "score":         h_score,
-                                    "lineup_confirmed": ol_info["confirmed"],
-                                    # Statcast contact fields (None = graceful fallback)
-                                    "xba":None,"avg_exit_velo":None,"avg_launch_angle":None,
-                                    "barrel_pct":None,"hard_hit_pct":None,"hard_hit_pct_l14":None,
-                                    # Hit Score — filled below
-                                    "hit_prob_score":None, "hit_prob_breakdown":{},
-                                }
-                                # ── Log5 calculation ──────────────────────────
-                                if HIT_LIKELIHOOD_AVAILABLE:
-                                    try:
-                                        bs = _build_batter_stats_for_log5(entry, hs_ or {})
-                                        ps = {"avg_against": blended_aa, "pitcher_hand": pitcher_hand}
-                                        hs_val, hs_bd = calculate_hitter_hit_prob(
-                                            bs, ps, league_avg=LEAGUE_AVG_2025)
-                                        entry["hit_prob_score"]     = hs_val
-                                        entry["hit_prob_breakdown"] = hs_bd
-                                    except Exception:
-                                        pass  # stay None on any failure
-                                # ─────────────────────────────────────────────
-                                all_hitter_results.append(entry)
+                if show_hitters:
+                    ol_info = glu[opp_side]
+                    if ol_info["confirmed"] or not confirmed_only:
+                        for pl_ in ol_info["lineup"]:
+                            hr_ = get_hitter_recent_stats(pl_["id"],7)
+                            hs_ = get_hitter_season_stats(pl_["id"],current_season)
+                            if hr_:
+                                h_score = compute_hitter_score(hr_)
+                                if not hot_hitters_only or h_score >= 60:
+                                    entry: Dict = {
+                                        "name":pl_["name"],"player_id":pl_["id"],
+                                        "position":pl_["position"],"batting_order":pl_["batting_order"],
+                                        "bat_side":pl_["bat_side"],"team":opp,"vs_pitcher":pitcher,
+                                        "pitcher_hand":pitcher_hand,
+                                        "pitcher_k_pct":(p_baseline or p_recent or {}).get("K_percent",0.22),
+                                        "pitcher_avg_against":blended_aa,"game_pk":gpk,
+                                        "recent":hr_,"season":hs_ or {},"score":h_score,
+                                        "lineup_confirmed":ol_info["confirmed"],
+                                        "xba":None,"avg_exit_velo":None,"avg_launch_angle":None,
+                                        "barrel_pct":None,"hard_hit_pct":None,"hard_hit_pct_l14":None,
+                                        "hit_prob_score":None,"hit_prob_breakdown":{},
+                                    }
+                                    if HIT_LIKELIHOOD_AVAILABLE:
+                                        try:
+                                            bs=_build_batter_stats_for_log5(entry,hs_ or {})
+                                            ps={"avg_against":blended_aa,"pitcher_hand":pitcher_hand}
+                                            hs_val,hs_bd=calculate_hitter_hit_prob(bs,ps,league_avg=LEAGUE_AVG_2025)
+                                            entry["hit_prob_score"]=hs_val; entry["hit_prob_breakdown"]=hs_bd
+                                        except Exception: pass
+                                    all_hitter_results.append(entry)
 
-    progress.empty()
+        progress.empty()
     all_pitcher_results.sort(key=lambda x:x["salci"],reverse=True)
+    # ── Apply Pro gate to pitcher data ───────────────────────────────
+    _pro_user = is_pro()
+    if not _pro_user:
+        all_pitcher_results = [strip_pro_fields(p) for p in all_pitcher_results]
+
     all_hitter_results.sort(key=lambda x:x["score"],reverse=True)
 
     # =========================================================
