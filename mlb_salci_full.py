@@ -1406,15 +1406,25 @@ def main():
                     if salci is not None:
                         base_k9=(p_baseline or p_recent or {}).get("K9",9.0)
                         proj=project_lines(salci,base_k9)
+                        lines_dict = proj.get("lines", {})
+                        # Safe best_line — fallback to highest k if no line >= 50
+                        above_50 = [k for k,v in lines_dict.items() if v >= 50]
+                        safe_best = max(above_50) if above_50 else (max(lines_dict.keys()) if lines_dict else 5)
+                        # Grade from SALCI score
+                        if salci >= 75:   _grade = "A"
+                        elif salci >= 60: _grade = "B"
+                        elif salci >= 45: _grade = "C"
+                        elif salci >= 30: _grade = "D"
+                        else:             _grade = "F"
                         all_pitcher_results.append({
                             "pitcher":pitcher,"pitcher_name":pitcher,"pitcher_id":pid,
                             "pitcher_hand":pitcher_hand,
                             "pitcher_k_pct":(p_baseline or p_recent or {}).get("K_percent",0.22),
                             "pitcher_avg_against":blended_aa,
                             "team":team,"opponent":opp,"opponent_id":opp_id,"game_pk":gpk,
-                            "salci":salci,"salci_grade":get_rating(salci)[0][0] if salci>=75 else "C",
-                            "expected":proj["expected"],"k_lines":proj["lines"],"lines":proj["lines"],
-                            "best_line":max(k for k,v in proj["lines"].items() if v>=50) if proj["lines"] else 5,
+                            "salci":salci,"salci_grade":_grade,
+                            "expected":proj["expected"],"k_lines":lines_dict,"lines":lines_dict,
+                            "best_line":safe_best,
                             "breakdown":bd_,"lineup_confirmed":glu[opp_side]["confirmed"],
                             "is_statcast":False,"stuff_score":None,"location_score":None,"profile_type":"N/A",
                         })
