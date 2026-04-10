@@ -1,0 +1,39 @@
+name: SALCI Nightly Base Build
+
+on:
+  schedule:
+    - cron: '0 3 * * *'    # 11 PM ET = 3:00 AM UTC daily
+  workflow_dispatch:         # Allows manual trigger from Actions tab
+
+jobs:
+  build-base:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # Required to push the JSON file back to repo
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests pybaseball scipy numpy pandas
+
+      - name: Run nightly base builder
+        run: python update_base_nightly.py
+
+      - name: Commit and push daily_base.json
+        run: |
+          git config user.name  "SALCI Bot"
+          git config user.email "salci-bot@users.noreply.github.com"
+          git add daily_base.json
+          git diff --staged --quiet || git commit -m "chore: nightly base build $(date -u +%Y-%m-%d)"
+          git push
