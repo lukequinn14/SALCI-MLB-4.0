@@ -672,6 +672,16 @@ def calculate_workload_score_v3(
 # SALCI v3 MASTER CALCULATION
 # =============================================================================
 
+# =============================================================================
+# SALCI v3.1 WEIGHTS - K-Focused (More separation, better strikeout emphasis)
+# =============================================================================
+SALCI_V3_1_WEIGHTS = {
+    'stuff':    0.48,   # Primary driver of strikeouts
+    'matchup':  0.28,   # Opponent K% and contact rate matter more
+    'workload': 0.14,   # Reduced
+    'location': 0.10,   # Reduced - high location can suppress Ks
+}
+
 def calculate_salci_v3(
     stuff_score: float,
     location_score: float,
@@ -679,46 +689,38 @@ def calculate_salci_v3(
     workload_score: float
 ) -> Dict:
     """
-    Calculate SALCI v3 using K-optimized weights.
-    
-    SALCI v3 = (0.40 × Stuff) + (0.15 × Location) + (0.25 × Matchup) + (0.20 × Workload)
-    
-    Args:
-        stuff_score: Stuff+ (100 = average)
-        location_score: Location+ (100 = average)
-        matchup_score: Matchup score (0-100, 50 = average)
-        workload_score: Workload score (0-100, 50 = average)
-    
-    Returns:
-        Dict with SALCI score, grade, and component breakdown
+    SALCI v3.1 - Stronger emphasis on true strikeout ability.
+    Elite K pitchers now reach 72-85+, average stays ~48-55.
     """
-    # Normalize Stuff+ and Location+ from 100-centered to 0-100 scale
-    # 100 → 50, 120 → 70, 80 → 30
-    stuff_normalized = 50 + (stuff_score - 100) if stuff_score else 50
-    location_normalized = 50 + (location_score - 100) if location_score else 50
-    
-    # Clamp all to valid range
-    stuff_normalized = max(20, min(80, stuff_normalized))
-    location_normalized = max(20, min(80, location_normalized))
-    matchup_clamped = max(20, min(80, matchup_score))
-    workload_clamped = max(20, min(80, workload_score))
-    
-    # Apply SALCI v3 weights
+    # Improved normalization - gives Stuff more room to move the score
+    stuff_normalized = 50 + (stuff_score - 100) * 1.15 if stuff_score else 50
+    location_normalized = 50 + (location_score - 100) * 0.85 if location_score else 50
+
+    # Wider clamping range
+    stuff_normalized = max(15, min(88, stuff_normalized))
+    location_normalized = max(15, min(85, location_normalized))
+    matchup_clamped = max(15, min(85, matchup_score))
+    workload_clamped = max(15, min(85, workload_score))
+
+    # Apply new weights
     salci = (
-        stuff_normalized * SALCI_V3_WEIGHTS['stuff'] +
-        location_normalized * SALCI_V3_WEIGHTS['location'] +
-        matchup_clamped * SALCI_V3_WEIGHTS['matchup'] +
-        workload_clamped * SALCI_V3_WEIGHTS['workload']
+        stuff_normalized * SALCI_V3_1_WEIGHTS['stuff'] +
+        location_normalized * SALCI_V3_1_WEIGHTS['location'] +
+        matchup_clamped * SALCI_V3_1_WEIGHTS['matchup'] +
+        workload_clamped * SALCI_V3_1_WEIGHTS['workload']
     )
-    
-    # Determine grade
-    if salci >= 70:
+
+    # Updated grade scale with better separation
+    if salci >= 72:
         grade = 'A'
         grade_desc = 'Elite K upside'
-    elif salci >= 60:
+    elif salci >= 63:
+        grade = 'B+'
+        grade_desc = 'Strong strikeout pitcher'
+    elif salci >= 55:
         grade = 'B'
-        grade_desc = 'Strong K potential'
-    elif salci >= 50:
+        grade_desc = 'Above-average K potential'
+    elif salci >= 48:
         grade = 'C'
         grade_desc = 'Average'
     elif salci >= 40:
@@ -727,39 +729,39 @@ def calculate_salci_v3(
     else:
         grade = 'F'
         grade_desc = 'Fade'
-    
+
     return {
         'salci': round(salci, 1),
         'grade': grade,
         'grade_desc': grade_desc,
-        'version': 'v3',
+        'version': 'v3.1',
         'components': {
             'stuff': {
                 'raw': stuff_score,
                 'normalized': round(stuff_normalized, 1),
-                'weight': SALCI_V3_WEIGHTS['stuff'],
-                'contribution': round(stuff_normalized * SALCI_V3_WEIGHTS['stuff'], 1),
+                'weight': SALCI_V3_1_WEIGHTS['stuff'],
+                'contribution': round(stuff_normalized * SALCI_V3_1_WEIGHTS['stuff'], 1),
                 'grade': get_component_grade(stuff_score, is_100_scale=True)
             },
             'location': {
                 'raw': location_score,
                 'normalized': round(location_normalized, 1),
-                'weight': SALCI_V3_WEIGHTS['location'],
-                'contribution': round(location_normalized * SALCI_V3_WEIGHTS['location'], 1),
+                'weight': SALCI_V3_1_WEIGHTS['location'],
+                'contribution': round(location_normalized * SALCI_V3_1_WEIGHTS['location'], 1),
                 'grade': get_component_grade(location_score, is_100_scale=True)
             },
             'matchup': {
                 'raw': matchup_score,
                 'normalized': round(matchup_clamped, 1),
-                'weight': SALCI_V3_WEIGHTS['matchup'],
-                'contribution': round(matchup_clamped * SALCI_V3_WEIGHTS['matchup'], 1),
+                'weight': SALCI_V3_1_WEIGHTS['matchup'],
+                'contribution': round(matchup_clamped * SALCI_V3_1_WEIGHTS['matchup'], 1),
                 'grade': get_component_grade(matchup_score, is_100_scale=False)
             },
             'workload': {
                 'raw': workload_score,
                 'normalized': round(workload_clamped, 1),
-                'weight': SALCI_V3_WEIGHTS['workload'],
-                'contribution': round(workload_clamped * SALCI_V3_WEIGHTS['workload'], 1),
+                'weight': SALCI_V3_1_WEIGHTS['workload'],
+                'contribution': round(workload_clamped * SALCI_V3_1_WEIGHTS['workload'], 1),
                 'grade': get_component_grade(workload_score, is_100_scale=False)
             },
         }
@@ -815,23 +817,21 @@ def calculate_expected_ks_v3(
     efficiency_factor: float = 1.0
 ) -> Dict:
     """
-    FINAL VERSION - SALCI v3 → Expected Ks + "At Least X Ks" Floor
-    Uses Poisson distribution + profile-aware volatility.
+    Updated for SALCI v3.1 - works with wider score distribution.
     """
     salci = salci_result['salci']
     components = salci_result.get('components', {})
     stuff = components.get('stuff', {}).get('raw', 100)
     location = components.get('location', {}).get('raw', 100)
 
-    # 1. Mean Expected Ks
-    k_per_ip = (salci / 50) * 1.0
-    k_per_ip = max(0.5, min(2.0, k_per_ip))
+    # Slightly more responsive K/IP scaling for the new weights
+    k_per_ip = (salci / 52) * 1.05      # Adjusted base so average ~50 still ≈ 1.0 K/IP
+    k_per_ip = max(0.5, min(2.2, k_per_ip))
     expected_ks = k_per_ip * projected_ip * efficiency_factor
 
-    # 2. Volatility (Stuff-dominant = higher variance)
     volatility = calculate_volatility_buffer(stuff, location)
 
-    # 3. Statistical Floor: highest K with P(X ≥ K) ≥ 60%
+    # Statistical Floor (P(X ≥ K) ≥ 60%)
     floor = 0
     lambda_ks = expected_ks
     for k in range(0, int(expected_ks) + 8):
@@ -843,7 +843,6 @@ def calculate_expected_ks_v3(
 
     floor_confidence = int((1 - poisson.cdf(floor - 1, lambda_ks)) * 100) if floor > 0 else 100
 
-    # 4. K-lines (At Least probabilities)
     k_lines = {}
     for i in range(4):
         k_value = floor + i
@@ -852,7 +851,7 @@ def calculate_expected_ks_v3(
         k_lines[k_value] = prob_pct
 
     return {
-        'expected': round(expected_ks, 1),           # ← UI key
+        'expected': round(expected_ks, 1),
         'floor': floor,
         'floor_confidence': floor_confidence,
         'volatility': round(volatility, 2),
