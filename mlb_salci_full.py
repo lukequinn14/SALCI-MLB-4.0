@@ -1141,6 +1141,16 @@ def render_hit_score_breakdown(hitter: Dict):
 # ===========================================================================
 
 def main():
+    # ── data_loader import and Pro gate MUST be first — sidebar uses is_pro() ──
+    from data_loader import (
+        load_todays_data, get_pitchers, source_banner,
+        confirmed_lineup_count, strip_pro_fields, check_pro_password,
+        PRO_FIELDS,
+    )
+
+    def is_pro() -> bool:
+        return check_pro_password(st.session_state.get("pro_password", ""))
+
     st.markdown(f"<h1 class='main-header'>⚾ SALCI v{SALCI_VERSION}</h1>", unsafe_allow_html=True)
     st.markdown(
         "<p class='sub-header'>Advanced MLB Prediction System · Stuff + Location + Hit Probability</p>",
@@ -1240,16 +1250,6 @@ def main():
     # DATA LOADING — Smart JSON loader (pre-computed files)
     # Falls back to live computation if no JSON found today
     # =========================================================
-    from data_loader import (
-        load_todays_data, get_pitchers, source_banner,
-        confirmed_lineup_count, strip_pro_fields, check_pro_password,
-        PRO_FIELDS
-    )
-
-    # ── Pro gate (session state persists across reruns) ───────────────
-    def is_pro() -> bool:
-        return check_pro_password(st.session_state.get("pro_password", ""))
-
     precomputed_data, data_source = load_todays_data(date_str)
 
     all_pitcher_results: List[Dict] = []
