@@ -2,20 +2,21 @@ name: SALCI Nightly Base Build
 
 on:
   schedule:
-    - cron: '0 3 * * *'    # 11 PM ET = 3:00 AM UTC daily
-  workflow_dispatch:         # Allows manual trigger from Actions tab
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-base:
     runs-on: ubuntu-latest
     permissions:
-      contents: write        # Required to push the JSON file back to repo
+      contents: write
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -25,7 +26,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests pybaseball scipy numpy pandas
+          pip install requests numpy pandas scipy
+          pip install pybaseball || echo "pybaseball install failed — Statcast skipped, proxy SALCI will be used"
 
       - name: Run nightly base builder
         run: python update_base_nightly.py
