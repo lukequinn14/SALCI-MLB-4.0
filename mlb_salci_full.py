@@ -994,86 +994,101 @@ def render_pitcher_card(result, show_stuff_location=True):
                             unsafe_allow_html=True)
 
         # ── Full-width: 4-component bars (Stuff / Matchup / Workload / Location) ──
+        # Always shown — missing scores display as "--" so Stats-API pitchers
+        # still get the section (matchup is always computed).
         if show_stuff_location:
             stuff    = result.get("stuff_score")
             location = result.get("location_score")
             matchup  = result.get("matchup_score")
             workload = result.get("workload_score")
 
-            if any([stuff, location, matchup, workload]):
-                st.markdown("<div style='margin-top:0.5rem;'>", unsafe_allow_html=True)
-                col_s, col_m, col_w, col_l = st.columns(4)
+            # Show the row whenever at least matchup exists (always true after live compute)
+            # For pre-computed base files without matchup, fall back gracefully.
+            st.markdown("<div style='margin-top:0.8rem;'>", unsafe_allow_html=True)
+            col_s, col_m, col_w, col_l = st.columns(4)
 
-                # Stuff (40%)
-                with col_s:
-                    if stuff:
-                        sc   = _get_component_color(stuff, True)
-                        pct  = min(100, max(0, (stuff - 70) * 2))
-                        st.markdown(f"""
-                        <div style='text-align:center;'>
-                            <div style='font-size:0.7rem;color:#666;'>⚡ STUFF (40%)</div>
-                            <div style='font-size:1.2rem;font-weight:bold;color:{sc};'>{int(stuff)}</div>
-                            <div style='background:#e5e7eb;border-radius:4px;height:6px;margin-top:2px;'>
-                                <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'>
-                                </div></div></div>""", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align:center;color:#aaa;font-size:0.8rem;'>STUFF<br>--</div>",
-                                    unsafe_allow_html=True)
+            # ── Stuff (48%) ──────────────────────────────────────────────────
+            with col_s:
+                if stuff is not None:
+                    sc  = _get_component_color(stuff, True)
+                    pct = min(100, max(0, (stuff - 70) * 2))
+                    st.markdown(f"""
+                    <div style='text-align:center;'>
+                        <div style='font-size:0.7rem;color:#888;'>⚡ STUFF (48%)</div>
+                        <div style='font-size:1.3rem;font-weight:bold;color:{sc};'>{int(stuff)}</div>
+                        <div style='background:#333;border-radius:4px;height:6px;margin-top:3px;'>
+                            <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'></div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        "<div style='text-align:center;color:#555;font-size:0.8rem;'>"
+                        "⚡ STUFF (48%)<br><span style='font-size:1.1rem;'>--</span></div>",
+                        unsafe_allow_html=True)
 
-                # Matchup (25%)
-                with col_m:
-                    if matchup:
-                        sc  = _get_component_color(matchup, False)
-                        pct = matchup
-                        st.markdown(f"""
-                        <div style='text-align:center;'>
-                            <div style='font-size:0.7rem;color:#666;'>🎯 MATCHUP (25%)</div>
-                            <div style='font-size:1.2rem;font-weight:bold;color:{sc};'>{int(matchup)}</div>
-                            <div style='background:#e5e7eb;border-radius:4px;height:6px;margin-top:2px;'>
-                                <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'>
-                                </div></div></div>""", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align:center;color:#aaa;font-size:0.8rem;'>MATCHUP<br>--</div>",
-                                    unsafe_allow_html=True)
+            # ── Matchup (28%) ─────────────────────────────────────────────────
+            with col_m:
+                if matchup is not None:
+                    sc  = _get_component_color(matchup, False)
+                    pct = matchup
+                    st.markdown(f"""
+                    <div style='text-align:center;'>
+                        <div style='font-size:0.7rem;color:#888;'>🎯 MATCHUP (28%)</div>
+                        <div style='font-size:1.3rem;font-weight:bold;color:{sc};'>{int(matchup)}</div>
+                        <div style='background:#333;border-radius:4px;height:6px;margin-top:3px;'>
+                            <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'></div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        "<div style='text-align:center;color:#555;font-size:0.8rem;'>"
+                        "🎯 MATCHUP (28%)<br><span style='font-size:1.1rem;'>--</span></div>",
+                        unsafe_allow_html=True)
 
-                # Workload (20%)
-                with col_w:
-                    if workload:
-                        sc  = _get_component_color(workload, False)
-                        pct = workload
-                        st.markdown(f"""
-                        <div style='text-align:center;'>
-                            <div style='font-size:0.7rem;color:#666;'>📊 WORKLOAD (20%)</div>
-                            <div style='font-size:1.2rem;font-weight:bold;color:{sc};'>{int(workload)}</div>
-                            <div style='background:#e5e7eb;border-radius:4px;height:6px;margin-top:2px;'>
-                                <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'>
-                                </div></div></div>""", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align:center;color:#aaa;font-size:0.8rem;'>WORKLOAD<br>--</div>",
-                                    unsafe_allow_html=True)
+            # ── Workload (14%) ────────────────────────────────────────────────
+            with col_w:
+                if workload is not None:
+                    sc  = _get_component_color(workload, False)
+                    pct = workload
+                    st.markdown(f"""
+                    <div style='text-align:center;'>
+                        <div style='font-size:0.7rem;color:#888;'>📊 WORKLOAD (14%)</div>
+                        <div style='font-size:1.3rem;font-weight:bold;color:{sc};'>{int(workload)}</div>
+                        <div style='background:#333;border-radius:4px;height:6px;margin-top:3px;'>
+                            <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'></div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        "<div style='text-align:center;color:#555;font-size:0.8rem;'>"
+                        "📊 WORKLOAD (14%)<br><span style='font-size:1.1rem;'>--</span></div>",
+                        unsafe_allow_html=True)
 
-                # Location (15%)
-                with col_l:
-                    if location:
-                        sc  = _get_component_color(location, True)
-                        pct = min(100, max(0, (location - 70) * 2))
-                        st.markdown(f"""
-                        <div style='text-align:center;'>
-                            <div style='font-size:0.7rem;color:#666;'>📍 LOCATION (15%)</div>
-                            <div style='font-size:1.2rem;font-weight:bold;color:{sc};'>{int(location)}</div>
-                            <div style='background:#e5e7eb;border-radius:4px;height:6px;margin-top:2px;'>
-                                <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'>
-                                </div></div></div>""", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div style='text-align:center;color:#aaa;font-size:0.8rem;'>LOCATION<br>--</div>",
-                                    unsafe_allow_html=True)
+            # ── Location (10%) ────────────────────────────────────────────────
+            with col_l:
+                if location is not None:
+                    sc  = _get_component_color(location, True)
+                    pct = min(100, max(0, (location - 70) * 2))
+                    st.markdown(f"""
+                    <div style='text-align:center;'>
+                        <div style='font-size:0.7rem;color:#888;'>📍 LOCATION (10%)</div>
+                        <div style='font-size:1.3rem;font-weight:bold;color:{sc};'>{int(location)}</div>
+                        <div style='background:#333;border-radius:4px;height:6px;margin-top:3px;'>
+                            <div style='width:{pct}%;background:{sc};border-radius:4px;height:100%;'></div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        "<div style='text-align:center;color:#555;font-size:0.8rem;'>"
+                        "📍 LOCATION (10%)<br><span style='font-size:1.1rem;'>--</span></div>",
+                        unsafe_allow_html=True)
 
-                st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-                # Arsenal — only when Statcast data is present
-                sb = result.get("stuff_breakdown", {})
-                if sb and result.get("is_statcast"):
-                    render_arsenal_display(sb)
+            # ── Arsenal — only for Statcast pitchers ─────────────────────────
+            sb = result.get("stuff_breakdown", {})
+            if sb and result.get("is_statcast"):
+                render_arsenal_display(sb)
 
         st.progress(min(salci / 100, 1.0))
         st.markdown("---")
