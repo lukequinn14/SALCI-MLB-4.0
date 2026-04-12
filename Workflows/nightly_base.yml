@@ -26,8 +26,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests numpy pandas
-          pip install pybaseball scipy || echo "pybaseball install failed — Statcast will be skipped"
+          pip install requests numpy pandas scipy
+          pip install pybaseball || echo "pybaseball install failed — Statcast skipped"
 
       - name: Run nightly base builder
         run: python update_base_nightly.py
