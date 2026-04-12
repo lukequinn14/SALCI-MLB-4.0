@@ -9,7 +9,7 @@ NEW IN v5.1:
 - 🎪 Arsenal Display: Per-pitch Stuff+ scores on pitcher cards
 - 📊 Sortable Table View: Quick-scan all pitchers with grades and K-lines
 - 📈 Model Accuracy Dashboard: 7-day and 30-day rolling performance tracking
-- ⚡ Leash Factor: Manaeger tendencies in workload calculation
+- ⚡ Leash Factor: Manager tendencies in workload calculation
 - 💾 UNIFIED REFLECTION SYSTEM: Standardized data storage with reflection.py
 
 INCLUDED FROM v5.0:
@@ -2142,7 +2142,7 @@ def main():
                     "game_pk": game_pk,
                     "salci": salci,
                     "salci_grade": salci_grade,
-                    "expected": proj.get("expected_ks", proj.get("expected", 5)),
+                    "expected": proj.get("expected", 5),
                     "k_lines": proj.get("k_lines", {}),
                     "lines": proj.get("k_lines", {}),
                     "best_line": proj.get("best_line", 5),
@@ -2183,11 +2183,15 @@ def main():
                         "opponent_id": opp_id,
                         "game_pk": game_pk,
                         "salci": salci,
-                        "salci_grade": get_rating(salci)[0][0] if salci >= 75 else "C",
+                        "salci_grade": ("A" if salci >= 75 else
+                                        "B" if salci >= 60 else
+                                        "C" if salci >= 45 else
+                                        "D" if salci >= 30 else "F"),
                         "expected": proj["expected"],
                         "k_lines": proj["lines"],
                         "lines": proj["lines"],
-                        "best_line": max(k for k, v in proj["lines"].items() if v >= 50) if proj["lines"] else 5,
+                        "best_line": (max((k for k, v in proj["lines"].items() if v >= 50), default=None)
+                                      or (max(proj["lines"].keys()) if proj["lines"] else 5)),
                         "breakdown": breakdown,
                         "lineup_confirmed": game_lineups[opp_side]["confirmed"],
                         "is_statcast": False,
