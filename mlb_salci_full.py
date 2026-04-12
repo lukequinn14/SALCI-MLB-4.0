@@ -95,6 +95,16 @@ try:
 except ImportError:
     pass  # Graceful — Hit Score column simply won't appear
 
+# ---------------------------------------------------------------------------
+# Data Loader Integration (pre-computed JSON fast path)
+# ---------------------------------------------------------------------------
+DATA_LOADER_AVAILABLE = False
+try:
+    from data_loader import load_todays_data, get_pitchers, source_banner
+    DATA_LOADER_AVAILABLE = True
+except ImportError:
+    pass  # Falls back to live compute
+
 # ----------------------------
 # Version Info
 # ----------------------------
@@ -1985,13 +1995,33 @@ def main():
     else:
         st.info(f"✅ **{confirmed_count} games** have confirmed lineups")
     
-    # Process all data
+    # Process all data — try pre-computed JSON first, fall back to live compute
     all_pitcher_results = []
     all_hitter_results = []
-    
-    progress = st.progress(0)
-    
-    for i, game in enumerate(games):
+
+    _precomputed_loaded = False
+    if DATA_LOADER_AVAILABLE:
+        _precomp, _source = load_todays_data(date_str)
+        if _precomp is not None:
+            all_pitcher_results = get_pitchers(_precomp)
+            _msg, _level = source_banner(_precomp, _source)
+            if _level == "success":
+                st.success(_msg)
+            elif _level == "info":
+                st.info(_msg)
+            else:
+                st.warning(_msg)
+            _precomputed_loaded = True
+
+    if not _precomputed_loaded:
+        if DATA_LOADER_AVAILABLE:
+            st.warning("⚠️ No pre-computed data found for today — running live calculations.")
+
+    if not _precomputed_loaded:
+        progress = st.progress(0)
+
+    if not _precomputed_loaded:
+      for i, game in enumerate(games):
         progress.progress((i + 1) / len(games))
         game_pk = game["game_pk"]
         game_lineups = lineup_status[game_pk]
@@ -2217,8 +2247,8 @@ def main():
                                     "hit_prob_breakdown": hit_prob_breakdown,
                                 })
     
-    progress.empty()
-    
+      progress.empty()
+
     # Sort results
     all_pitcher_results.sort(key=lambda x: x["salci"], reverse=True)
     all_hitter_results.sort(key=lambda x: x["score"], reverse=True)
