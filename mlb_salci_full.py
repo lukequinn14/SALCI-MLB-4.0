@@ -9,7 +9,7 @@ NEW IN v5.1:
 - 🎪 Arsenal Display: Per-pitch Stuff+ scores on pitcher cards
 - 📊 Sortable Table View: Quick-scan all pitchers with grades and K-lines
 - 📈 Model Accuracy Dashboard: 7-day and 30-day rolling performance tracking
-- ⚡ Leash Factor: Manager tendencies in workload calculation
+- ⚡ Leash Factor: Manaeger tendencies in workload calculation
 - 💾 UNIFIED REFLECTION SYSTEM: Standardized data storage with reflection.py
 
 INCLUDED FROM v5.0:
