@@ -2,7 +2,6 @@ name: SALCI Day-of Final Update
 
 on:
   schedule:
-    # Every 20 minutes from 3 PM ET (7 PM UTC) through 10 PM ET (2 AM UTC)
     - cron: '0,20,40 19 * * *'
     - cron: '0,20,40 20 * * *'
     - cron: '0,20,40 21 * * *'
@@ -35,7 +34,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install requests numpy pandas scipy
-          pip install pybaseball || echo "pybaseball install failed — Statcast skipped"
+          pip install pybaseball || echo "pybaseball install failed — Statcast skipped, proxy SALCI will be used"
 
       - name: Check daily_base.json exists (self-heal if missing)
         run: |
@@ -49,7 +48,7 @@ jobs:
       - name: Run day-of final updater
         run: python update_final_dayof.py
 
-      - name: Commit and push daily_final.json
+      - name: Commit and push
         run: |
           git config user.name  "SALCI Bot"
           git config user.email "salci-bot@users.noreply.github.com"
