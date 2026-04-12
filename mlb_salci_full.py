@@ -85,6 +85,16 @@ except ImportError as e:
     st.warning(f"⚠️ Reflection module not available: {e}")
     REFLECTION_AVAILABLE = False
 
+# ---------------------------------------------------------------------------
+# Hit Likelihood Integration
+# ---------------------------------------------------------------------------
+HIT_LIKELIHOOD_AVAILABLE = False
+try:
+    from hit_likelihood import calculate_hitter_hit_prob
+    HIT_LIKELIHOOD_AVAILABLE = True
+except ImportError:
+    pass  # Graceful — Hit Score column simply won't appear
+
 # ----------------------------
 # Version Info
 # ----------------------------
@@ -2169,6 +2179,25 @@ def main():
                         if h_recent:
                             h_score = compute_hitter_score(h_recent)
                             if not hot_hitters_only or h_score >= 60:
+                                # Compute Log5 Hit Score if hit_likelihood is available
+                                hit_prob_score = None
+                                hit_prob_breakdown = {}
+                                if HIT_LIKELIHOOD_AVAILABLE:
+                                    try:
+                                        batter_stats = {
+                                            "avg": (h_season or {}).get("avg") or h_recent.get("avg", 0.248),
+                                            "l7_avg": h_recent.get("avg"),
+                                            "bat_side": player.get("bat_side", "R"),
+                                        }
+                                        pitcher_stats_for_log5 = {
+                                            "avg_against": (p_baseline or p_recent or {}).get("avg_against", 0.248),
+                                            "pitcher_hand": pitcher_hand,
+                                        }
+                                        hit_prob_score, hit_prob_breakdown = calculate_hitter_hit_prob(
+                                            batter_stats, pitcher_stats_for_log5, league_avg=0.248
+                                        )
+                                    except Exception:
+                                        pass
                                 all_hitter_results.append({
                                     "name": player["name"],
                                     "player_id": player["id"],
@@ -2183,7 +2212,9 @@ def main():
                                     "recent": h_recent,
                                     "season": h_season or {},
                                     "score": h_score,
-                                    "lineup_confirmed": opp_lineup_info["confirmed"]
+                                    "lineup_confirmed": opp_lineup_info["confirmed"],
+                                    "hit_prob_score": hit_prob_score,
+                                    "hit_prob_breakdown": hit_prob_breakdown,
                                 })
     
     progress.empty()
@@ -2335,6 +2366,14 @@ def main():
             st.markdown("#### 📊 All Confirmed Starters")
             
             if all_hitter_results:
+                def _hs_label(score):
+                    if score is None: return "—"
+                    if score >= 75: return f"{score} 🔥"
+                    if score >= 60: return f"{score} ✅"
+                    if score >= 45: return f"{score} ➖"
+                    if score >= 30: return f"{score} ⚠️"
+                    return f"{score} ❌"
+
                 df_hitters = pd.DataFrame([{
                     "Order": f"#{h['batting_order']}" if h.get('batting_order') else "-",
                     "Player": h["name"],
@@ -2347,10 +2386,15 @@ def main():
                     "AVG (L7)": f"{h['recent'].get('avg', 0):.3f}",
                     "OPS (L7)": f"{h['recent'].get('ops', 0):.3f}",
                     "K% (L7)": f"{h['recent'].get('k_rate', 0)*100:.1f}%",
+                    "Hit Score": _hs_label(h.get("hit_prob_score")),
                     "Confirmed": "✅" if h.get("lineup_confirmed") else "⏳"
                 } for h in all_hitter_results])
                 
                 st.dataframe(df_hitters, use_container_width=True, hide_index=True)
+                
+                if HIT_LIKELIHOOD_AVAILABLE:
+                    st.caption("🎯 **Hit Score** — 0-100 Log5 probability (50 = league average matchup). "
+                               "🔥 ≥75 · ✅ ≥60 · ➖ ≥45 · ⚠️ ≥30 · ❌ <30")
     
     # ======================
     # TAB 3: Best Bets
@@ -2647,26 +2691,148 @@ def main():
         st.markdown(f"**Analyzing:** {yesterday_display}")
         st.markdown("---")
         
-        if REFLECTION_AVAILABLE:
-            st.markdown("#### 📊 Reflection Analysis")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("##### ⚾ Yesterday's Pitchers")
-                yesterday_actuals = get_yesterday_hitter_leaders(yesterday_str, min_hits=2)
-                if yesterday_actuals:
-                    st.info(f"Found {len(yesterday_actuals)} notable performances")
-                else:
-                    st.warning("No completed games data available")
-            
-            with col2:
-                st.markdown("##### 📥 Save Today's Predictions")
-                if st.button("Save Current Predictions for Tomorrow", use_container_width=True):
-                    if save_predictions_with_reflection(date_str, all_pitcher_results, all_hitter_results):
-                        st.rerun()
+        if not REFLECTION_AVAILABLE:
+            st.warning("⚠️ Reflection module not available. Place `reflection.py` alongside this file and restart.")
         else:
-            st.warning("⚠️ Reflection module not available. Cannot save/load predictions.")
+            # ── Step 1: Save today's predictions ─────────────────────────────
+            with st.expander("📥 Step 1 — Save today's predictions (do this BEFORE games start)", expanded=False):
+                st.markdown("Saving locks in your SALCI scores so they can be compared against box scores tonight.")
+                existing_preds = refl.load_daily_predictions(date_str)
+                if existing_preds:
+                    saved_at = existing_preds.get("saved_at", "unknown time")
+                    st.success(f"✅ Predictions already saved for **{date_str}** at {saved_at[:19]}")
+                    st.caption(f"{len(existing_preds.get('pitchers', []))} pitchers · "
+                               f"{len(existing_preds.get('hitters', []))} hitters stored")
+                    if st.button("🔄 Overwrite with current predictions", key="overwrite_preds"):
+                        save_predictions_with_reflection(date_str, all_pitcher_results, all_hitter_results)
+                else:
+                    if st.button("💾 Save today's predictions now", use_container_width=True, key="save_preds_btn"):
+                        save_predictions_with_reflection(date_str, all_pitcher_results, all_hitter_results)
+
+            st.markdown("---")
+
+            # ── Step 2: Collect results and show reflection ───────────────────
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button(f"🔄 Collect results & reflect for {yesterday_str}",
+                             use_container_width=True, key="collect_btn"):
+                    with st.spinner("Fetching MLB box scores…"):
+                        try:
+                            reflection_data = refl.collect_and_reflect_date(yesterday_str, force=True)
+                        except AttributeError:
+                            reflection_data = refl.collect_and_reflect_yesterday()
+                    if reflection_data:
+                        st.success("✅ Reflection generated!")
+                    else:
+                        preds_exist = refl.load_daily_predictions(yesterday_str) is not None
+                        if not preds_exist:
+                            st.warning(f"⚠️ No saved predictions for {yesterday_str}. "
+                                       "Save predictions before games start.")
+                        else:
+                            st.warning("⚠️ No completed games found yet. Try again after games finish.")
+            with col_btn2:
+                existing_ref = refl.load_reflection(yesterday_str)
+                if existing_ref:
+                    gen_at = existing_ref.get("generated_at", "")[:19]
+                    st.info(f"📂 Reflection cached from {gen_at}")
+
+            # ── Display reflection ────────────────────────────────────────────
+            reflection_data = refl.load_reflection(yesterday_str)
+
+            if not reflection_data:
+                st.info(
+                    f"No reflection data for **{yesterday_str}** yet.\n\n"
+                    "**Workflow:**\n"
+                    "1. Save today's predictions before games start (Step 1 above)\n"
+                    "2. After games finish, click 'Collect results' above\n"
+                    "3. The reflection will appear here"
+                )
+            else:
+                rf = reflection_data
+                n  = rf.get("games_tracked", 0)
+
+                st.markdown(f"#### 📊 {yesterday_display} — {n} starters tracked")
+
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("✅ Hit Rate",          f"{rf.get('accuracy_pct', 0):.1f}%",
+                          help="Projections within ±1.5 Ks of actual")
+                m2.metric("📈 Avg Projected Ks",  f"{rf.get('avg_predicted_ks', 0):.1f}")
+                m3.metric("📊 Avg Actual Ks",      f"{rf.get('avg_actual_ks', 0):.1f}")
+                m4.metric("⚖️ Avg K Delta",        f"{rf.get('avg_k_delta', 0):+.2f}",
+                          delta_color="inverse",
+                          help="Positive = model ran LOW (actual > projected)")
+                m5.metric("📐 MAE",                f"{rf.get('mae', 0):.2f} Ks")
+
+                hits   = rf.get("hits",   0)
+                overs  = rf.get("overs",  0)
+                unders = rf.get("unders", 0)
+                st.markdown(
+                    f"<div style='display:flex;gap:1rem;margin:0.5rem 0;'>"
+                    f"<span style='background:#10b981;color:white;padding:0.2rem 0.8rem;border-radius:8px;'>✅ HIT: {hits}</span>"
+                    f"<span style='background:#3b82f6;color:white;padding:0.2rem 0.8rem;border-radius:8px;'>📈 OVER: {overs} ({rf.get('over_pct',0):.0f}%)</span>"
+                    f"<span style='background:#f97316;color:white;padding:0.2rem 0.8rem;border-radius:8px;'>📉 UNDER: {unders} ({rf.get('under_pct',0):.0f}%)</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+                if rf.get("lesson"):
+                    st.info(f"💡 **Insight:** {rf['lesson']}")
+
+                st.markdown("---")
+
+                col_o, col_u = st.columns(2)
+                with col_o:
+                    st.markdown("#### 🔥 Overperformers")
+                    for p in rf.get("overperformers", []):
+                        salci_str = f"SALCI {p['salci']:.0f}" if p.get("salci") else ""
+                        st.markdown(
+                            f"<div style='background:#d1fae5;border-left:4px solid #10b981;"
+                            f"border-radius:6px;padding:0.6rem 1rem;margin-bottom:0.4rem;'>"
+                            f"<strong>{p['name']}</strong> · {p.get('team','')}"
+                            f"{'  ·  ' + salci_str if salci_str else ''}<br>"
+                            f"Projected <strong>{p['predicted']:.1f}</strong> → "
+                            f"Actual <strong>{p['actual']}</strong> "
+                            f"<span style='color:#10b981;font-weight:bold;'>(+{p['delta']:.1f} Ks)</span>"
+                            f"</div>", unsafe_allow_html=True)
+                    if not rf.get("overperformers"):
+                        st.caption("No pitchers exceeded projection by more than 1.5 Ks.")
+
+                with col_u:
+                    st.markdown("#### ❄️ Underperformers")
+                    for p in rf.get("underperformers", []):
+                        salci_str = f"SALCI {p['salci']:.0f}" if p.get("salci") else ""
+                        st.markdown(
+                            f"<div style='background:#fee2e2;border-left:4px solid #ef4444;"
+                            f"border-radius:6px;padding:0.6rem 1rem;margin-bottom:0.4rem;'>"
+                            f"<strong>{p['name']}</strong> · {p.get('team','')}"
+                            f"{'  ·  ' + salci_str if salci_str else ''}<br>"
+                            f"Projected <strong>{p['predicted']:.1f}</strong> → "
+                            f"Actual <strong>{p['actual']}</strong> "
+                            f"<span style='color:#ef4444;font-weight:bold;'>({p['delta']:+.1f} Ks)</span>"
+                            f"</div>", unsafe_allow_html=True)
+                    if not rf.get("underperformers"):
+                        st.caption("No pitchers missed projection by more than 1.5 Ks.")
+
+                st.markdown("---")
+                st.markdown("#### 📋 Full Comparison Table")
+                comparisons = rf.get("comparisons", [])
+                if comparisons:
+                    rows = []
+                    for c in sorted(comparisons, key=lambda x: abs(x["k_delta"]), reverse=True):
+                        acc_icon = "✅" if c["k_accuracy"] == "HIT" else "📈" if c["k_accuracy"] == "OVER" else "📉"
+                        rows.append({
+                            "Pitcher":     c["pitcher_name"],
+                            "Team":        c.get("team", ""),
+                            "SALCI":       f"{c['predicted_salci']:.1f}" if c.get("predicted_salci") else "—",
+                            "Projected K": f"{c['predicted_ks']:.1f}",
+                            "Actual K":    str(c["actual_ks"]),
+                            "Δ Ks":        f"{c['k_delta']:+.1f}",
+                            "IP":          f"{c['actual_ip']:.1f}",
+                            "Result":      f"{acc_icon} {c['k_accuracy']}",
+                        })
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                else:
+                    st.info("No individual comparison data available.")
     
     # ======================
     # TAB 7: Model Accuracy
@@ -2676,30 +2842,95 @@ def main():
         st.markdown("*Track how well SALCI predictions match actual results over time.*")
         st.markdown("---")
         
-        if REFLECTION_AVAILABLE:
-            st.markdown("#### 📊 Accuracy Metrics")
-            
+        if not REFLECTION_AVAILABLE:
+            st.warning("⚠️ Reflection module not available. Cannot display accuracy dashboard.")
+        else:
+            window = st.radio("Lookback window", ["7 days", "14 days", "30 days"],
+                              horizontal=True, key="accuracy_window")
+            days_map = {"7 days": 7, "14 days": 14, "30 days": 30}
+            n_days   = days_map[window]
+
             try:
-                rolling_accuracy = refl.get_rolling_accuracy(7)
-                if rolling_accuracy:
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("7-Day K-Line Hit %", 
-                                 f"{rolling_accuracy.get('line_hit_pct', 0):.1f}%")
-                    with col2:
-                        st.metric("MAE (Avg K Miss)", 
-                                 f"{rolling_accuracy.get('mae', 0):.2f}")
-                    with col3:
-                        bias = rolling_accuracy.get('avg_diff', 0)
-                        st.metric("Prediction Bias", f"{'+' if bias > 0 else ''}{bias:.1f}")
-                    with col4:
-                        st.metric("Sample Size", rolling_accuracy.get('sample_size', 0))
-                else:
-                    st.info("No historical accuracy data yet. Predictions will be tracked after you save them.")
+                ra = refl.get_rolling_accuracy(n_days)
             except Exception as e:
                 st.warning(f"Could not load accuracy data: {e}")
-        else:
-            st.warning("⚠️ Reflection module not available. Cannot display accuracy dashboard.")
+                ra = {}
+
+            if not ra or ra.get("games_analyzed", 0) == 0:
+                st.info(
+                    f"No accuracy data for the past {n_days} days yet.\n\n"
+                    "**How to build history:**\n"
+                    "1. Save predictions every day before games start (Tab 6 → Step 1)\n"
+                    "2. Collect results each evening (Tab 6 → 'Collect results')\n"
+                    "3. Accuracy will accumulate here automatically"
+                )
+            else:
+                st.markdown(f"#### Last {n_days} days — {ra.get('games_analyzed', 0)} pitcher-games")
+
+                tendency = ra.get("tendency", "CALIBRATED")
+                tendency_color = {"OVER": "#3b82f6", "UNDER": "#f97316", "CALIBRATED": "#10b981"}.get(tendency, "#6b7280")
+                tendency_label = {
+                    "OVER":       "📈 Running LOW — model under-projects Ks",
+                    "UNDER":      "📉 Running HIGH — model over-projects Ks",
+                    "CALIBRATED": "⚖️ Well calibrated",
+                }.get(tendency, "")
+                st.markdown(
+                    f"<div style='background:{tendency_color}22;border:1px solid {tendency_color};"
+                    f"border-radius:8px;padding:0.6rem 1rem;margin-bottom:1rem;'>"
+                    f"<strong style='color:{tendency_color};'>{tendency_label}</strong></div>",
+                    unsafe_allow_html=True
+                )
+
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("✅ Hit Rate",   f"{ra.get('accuracy_pct', 0):.1f}%",
+                          help="% within ±1.5 Ks of actual")
+                c2.metric("📐 MAE",        f"{ra.get('mae', 0):.2f} Ks")
+                c3.metric("⚖️ Avg Δ",      f"{ra.get('avg_k_delta', 0):+.2f} Ks",
+                          delta_color="inverse")
+                c4.metric("📈 Over %",     f"{ra.get('over_pct', 0):.0f}%")
+                c5.metric("📉 Under %",    f"{ra.get('under_pct', 0):.0f}%")
+
+                daily = ra.get("daily", [])
+                if len(daily) >= 2:
+                    st.markdown("---")
+                    st.markdown("#### 📈 Daily Accuracy Trend")
+                    fig = make_subplots(specs=[[{"secondary_y": True}]])
+                    fig.add_trace(go.Bar(
+                        x=[d["date"] for d in daily],
+                        y=[d["accuracy_pct"] for d in daily],
+                        name="Hit Rate %", marker_color="#10b981", opacity=0.7,
+                    ), secondary_y=False)
+                    fig.add_trace(go.Scatter(
+                        x=[d["date"] for d in daily],
+                        y=[d["avg_k_delta"] for d in daily],
+                        name="Avg Δ Ks", mode="lines+markers",
+                        line=dict(color="#3b82f6", width=2), marker=dict(size=6),
+                    ), secondary_y=True)
+                    fig.add_hline(y=70, line_dash="dash", line_color="#10b981",
+                                  secondary_y=False, annotation_text="70% target")
+                    fig.add_hline(y=0, line_dash="dot", line_color="#6b7280",
+                                  secondary_y=True, annotation_text="Zero bias")
+                    fig.update_layout(
+                        height=350,
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        margin=dict(l=40, r=40, t=40, b=40),
+                    )
+                    fig.update_yaxes(title_text="Hit Rate %", range=[0, 100], secondary_y=False)
+                    fig.update_yaxes(title_text="Avg K Delta", secondary_y=True)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                if daily:
+                    st.markdown("---")
+                    st.markdown("#### 📋 Day-by-Day Summary")
+                    df_daily = pd.DataFrame([{
+                        "Date":     d["date"],
+                        "Games":    d["games"],
+                        "Hit Rate": f"{d['accuracy_pct']:.1f}%",
+                        "Avg Δ Ks": f"{d['avg_k_delta']:+.2f}",
+                        "MAE":      f"{d['mae']:.2f}",
+                    } for d in reversed(daily)])
+                    st.dataframe(df_daily, use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
     main()
