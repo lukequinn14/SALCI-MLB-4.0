@@ -2,8 +2,8 @@ name: SALCI Nightly Base Build
 
 on:
   schedule:
-    - cron: '0 3 * * *'    # 11 PM ET = 3:00 AM UTC daily
-  workflow_dispatch:         # Manual trigger from Actions tab
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -27,7 +27,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install requests numpy pandas scipy
-          pip install pybaseball || echo "pybaseball install failed — Statcast skipped"
+          pip install pybaseball || echo "pybaseball install failed — Statcast skipped, proxy SALCI will be used"
 
       - name: Run nightly base builder
         run: python update_base_nightly.py
