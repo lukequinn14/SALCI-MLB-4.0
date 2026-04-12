@@ -2,6 +2,7 @@ name: SALCI Day-of Final Update
 
 on:
   schedule:
+    # Every 20 minutes from 3 PM ET (7 PM UTC) through 10 PM ET (2 AM UTC)
     - cron: '0,20,40 19 * * *'
     - cron: '0,20,40 20 * * *'
     - cron: '0,20,40 21 * * *'
@@ -33,10 +34,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests numpy pandas
-          pip install pybaseball scipy || echo "pybaseball install failed — Statcast will be skipped"
+          pip install requests numpy pandas scipy
+          pip install pybaseball || echo "pybaseball install failed — Statcast skipped"
 
-      - name: Check daily_base.json exists
+      - name: Check daily_base.json exists (self-heal if missing)
         run: |
           if [ ! -f daily_base.json ]; then
             echo "daily_base.json not found — running base builder first"
