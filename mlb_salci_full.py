@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import json
 import os
 
@@ -874,72 +875,126 @@ def render_arsenal_display(stuff_breakdown):
     st.markdown("</div>", unsafe_allow_html=True)
 
 def render_pitcher_card(result, show_stuff_location=True):
+    """
+    Pitcher card: Name/Team | SALCI score | Expected Ks + K-lines
+    then full-width component bars (Stuff/Matchup/Workload/Location)
+    then arsenal pitch tiles (Statcast only).
+    """
     salci = result["salci"]
     _, emoji, css_class = get_rating(salci)
+    grade  = result.get("salci_grade", "C")
+    is_sc  = result.get("is_statcast", False)
+
     with st.container():
-        c1,c2,c3 = st.columns([2,1,2])
+        # ── Row 1: name | score | projections ────────────────────────────────
+        c1, c2, c3 = st.columns([2.2, 1, 2.2])
+
         with c1:
-            ph = result.get("pitcher_hand","R")
+            ph = result.get("pitcher_hand", "R")
             st.markdown(f"### {result['pitcher']} ({ph}HP)")
             st.markdown(f"**{result['team']}** vs {result['opponent']}")
-            if result.get("profile_type") not in (None,"BALANCED","N/A"):
+            pt = result.get("profile_type")
+            if pt and pt not in (None, "BALANCED", "N/A"):
                 em = {"ELITE":"⚡","STUFF-DOMINANT":"🔥","LOCATION-DOMINANT":"🎯",
-                      "BALANCED-PLUS":"💪","ONE-TOOL":"📊","LIMITED":"⚠️"}.get(result["profile_type"],"❓")
-                st.markdown(f"<span style='font-size:.85rem;'>{em} {result['profile_type']}</span>", unsafe_allow_html=True)
-            badge = "🎯 Statcast" if result.get("is_statcast") else "📊 Stats API"
-            bc    = "#10b981" if result.get("is_statcast") else "#6b7280"
-            st.markdown(f"<span style='font-size:.7rem;background:{bc};color:white;padding:2px 6px;border-radius:4px;'>{badge}</span>", unsafe_allow_html=True)
+                      "BALANCED-PLUS":"💪","ONE-TOOL":"📊","LIMITED":"⚠️"}.get(pt, "❓")
+                st.markdown(f"<span style='font-size:.82rem;'>{em} {pt}</span>",
+                            unsafe_allow_html=True)
+            bc  = "#10b981" if is_sc else "#6b7280"
+            lbl = "🎯 Statcast" if is_sc else "📊 Stats API"
+            st.markdown(
+                f"<span style='font-size:.7rem;background:{bc};color:white;"
+                f"padding:2px 8px;border-radius:4px;'>{lbl}</span>",
+                unsafe_allow_html=True)
+
         with c2:
-            grade = result.get("salci_grade","C")
-            st.markdown(f"<div style='text-align:center;'>"
-                        f"<span style='font-size:2.5rem;font-weight:bold;'>{salci}</span><br>"
-                        f"<span class='{css_class}'>{emoji} Grade {grade}</span></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='text-align:center;padding-top:.4rem;'>"
+                f"<span style='font-size:2.8rem;font-weight:900;'>{salci}</span><br>"
+                f"<span class='{css_class}' style='font-size:.95rem;'>— Grade {grade}</span>"
+                f"</div>",
+                unsafe_allow_html=True)
+
         with c3:
-            exp = result.get("expected","--")
-            fl  = result.get("floor"); fc = result.get("floor_confidence")
+            exp = result.get("expected", "--")
+            fl  = result.get("floor")
+            fc  = result.get("floor_confidence")
             st.markdown(f"**Expected Ks:** {exp}")
             if fl is not None and fc is not None:
-                st.markdown(f"**At Least:** <span style='color:#10b981;font-weight:bold;'>{fl} Ks</span> ({fc}% confidence)", unsafe_allow_html=True)
-            kl = result.get("k_lines",{}) or result.get("lines",{})
+                st.markdown(
+                    f"**At Least:** "
+                    f"<span style='color:#10b981;font-weight:bold;'>{fl} Ks</span>"
+                    f" ({fc}% confidence)",
+                    unsafe_allow_html=True)
+            kl = result.get("k_lines", {}) or result.get("lines", {})
             if kl:
-                cols = st.columns(4)
-                for i,(kv,prob) in enumerate(sorted(kl.items())[:4]):
-                    with cols[i]:
-                        col = "#22c55e" if prob>=70 else "#eab308" if prob>=50 else "#ef4444"
-                        st.markdown(f"<div style='text-align:center;'><small>{kv}+</small><br>"
-                                    f"<span style='color:{col};font-weight:bold;'>{prob}%</span></div>", unsafe_allow_html=True)
+                sorted_kl = sorted(kl.items())[:4]
+                k_cols = st.columns(len(sorted_kl))
+                for idx, (kv, prob) in enumerate(sorted_kl):
+                    with k_cols[idx]:
+                        c_ = "#22c55e" if prob >= 70 else "#eab308" if prob >= 50 else "#ef4444"
+                        st.markdown(
+                            f"<div style='text-align:center;'>"
+                            f"<div style='font-size:.75rem;color:#888;'>{kv}+</div>"
+                            f"<div style='font-size:1.1rem;font-weight:bold;color:{c_};'>{prob}%</div>"
+                            f"</div>",
+                            unsafe_allow_html=True)
+
+        # ── Row 2: component bars ─────────────────────────────────────────────
         if show_stuff_location:
-            st_s = result.get("stuff_score"); lo_s = result.get("location_score")
-            ma_s = result.get("matchup_score"); wl_s = result.get("workload_score")
-            if any([st_s,lo_s,ma_s,wl_s]):
-                cols4 = st.columns(4)
-                def cc(sc,i100=True):
-                    if sc is None: return "#d1d5db"
-                    if i100: return "#10b981" if sc>=115 else "#22c55e" if sc>=105 else "#eab308" if sc>=95 else "#ef4444"
-                    return "#10b981" if sc>=65 else "#22c55e" if sc>=50 else "#eab308" if sc>=35 else "#ef4444"
-                for col_, lbl, sc, i100, pct_fn in [
-                    (cols4[0],"⚡ STUFF (40%)",   st_s, True,  lambda v: min(100,max(0,(v-70)*2))),
-                    (cols4[1],"🎯 MATCHUP (25%)", ma_s, False, lambda v: v),
-                    (cols4[2],"📊 WORKLOAD (20%)",wl_s, False, lambda v: v),
-                    (cols4[3],"📍 LOCATION (15%)",lo_s, True,  lambda v: min(100,max(0,(v-70)*2))),
-                ]:
+            st_s = result.get("stuff_score")
+            ma_s = result.get("matchup_score")
+            wl_s = result.get("workload_score")
+            lo_s = result.get("location_score")
+
+            def comp_color(sc, is_100=True):
+                if sc is None: return "#9ca3af"
+                if is_100:
+                    if sc >= 115: return "#10b981"
+                    if sc >= 105: return "#22c55e"
+                    if sc >= 95:  return "#eab308"
+                    return "#ef4444"
+                else:
+                    if sc >= 65: return "#10b981"
+                    if sc >= 50: return "#22c55e"
+                    if sc >= 35: return "#eab308"
+                    return "#ef4444"
+
+            components = [
+                ("⚡ STUFF (40%)",    st_s, True,  lambda v: min(100, max(0, (v - 70) * 2))),
+                ("🎯 MATCHUP (25%)",  ma_s, False, lambda v: v),
+                ("📊 WORKLOAD (20%)", wl_s, False, lambda v: v),
+                ("📍 LOCATION (15%)", lo_s, True,  lambda v: min(100, max(0, (v - 70) * 2))),
+            ]
+
+            if any(sc is not None for _, sc, _, _ in components):
+                st.markdown("<div style='margin-top:.6rem;'>", unsafe_allow_html=True)
+                bar_cols = st.columns(4)
+                for col_, (lbl_c, sc, is_100, pct_fn) in zip(bar_cols, components):
                     with col_:
-                        if sc:
-                            c_ = cc(sc,i100); pct = pct_fn(sc)
+                        if sc is not None:
+                            c_c  = comp_color(sc, is_100)
+                            pct  = pct_fn(sc)
                             st.markdown(f"""
                             <div style='text-align:center;'>
-                                <div style='font-size:.7rem;color:#666;'>{lbl}</div>
-                                <div style='font-size:1.2rem;font-weight:bold;color:{c_};'>{int(sc)}</div>
-                                <div style='background:#e5e7eb;border-radius:4px;height:6px;margin-top:2px;'>
-                                    <div style='width:{pct}%;background:{c_};border-radius:4px;height:100%;'></div>
+                                <div style='font-size:.68rem;color:#888;margin-bottom:2px;'>{lbl_c}</div>
+                                <div style='font-size:1.35rem;font-weight:bold;color:{c_c};'>{int(sc)}</div>
+                                <div style='background:#374151;border-radius:4px;height:6px;margin-top:3px;'>
+                                    <div style='width:{pct}%;background:{c_c};border-radius:4px;height:100%;'></div>
                                 </div>
                             </div>""", unsafe_allow_html=True)
                         else:
-                            st.markdown(f"<div style='text-align:center;color:#aaa;font-size:.8rem;'>{lbl.split()[0]}<br>--</div>", unsafe_allow_html=True)
-                sb = result.get("stuff_breakdown",{})
-                if sb and result.get("is_statcast"):
-                    render_arsenal_display(sb)
-        st.progress(min(salci/100,1.0))
+                            st.markdown(
+                                f"<div style='text-align:center;color:#555;font-size:.8rem;'>"
+                                f"{lbl_c.split()[0]}<br><span style='font-size:1.1rem;'>—</span></div>",
+                                unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            # ── Row 3: arsenal tiles ──────────────────────────────────────────
+            sb = result.get("stuff_breakdown", {})
+            if sb and is_sc:
+                render_arsenal_display(sb)
+
+        st.progress(min(salci / 100, 1.0))
         st.markdown("---")
 
 def render_compact_summary(pr_):
@@ -1484,7 +1539,8 @@ def main():
             c3.metric("✅ Strong (B)", len([p for p in fp if 60<=p["salci"]<75]))
             c4.metric("📋 Confirmed",  len([p for p in fp if p.get("lineup_confirmed")]))
             st.markdown("---")
-            view_mode = st.radio("View Mode",["📊 Component Table","🎴 Pitcher Cards"],horizontal=True,index=0)
+            view_mode = st.radio("View Mode",["🎴 Pitcher Cards","📊 Component Table"],horizontal=True,index=0)
+
             if view_mode=="📊 Component Table":
                 def gg(sc,i=True):
                     if i: return "A+" if sc>=115 else "A" if sc>=110 else "B+" if sc>=105 else "B" if sc>=100 else "C+" if sc>=95 else "C" if sc>=90 else "D"
@@ -2030,9 +2086,6 @@ def main():
                 if len(daily) >= 2:
                     st.markdown("---")
                     st.markdown("#### 📈 Daily Accuracy Trend")
-
-                    import plotly.graph_objects as go
-                    from plotly.subplots import make_subplots
 
                     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
