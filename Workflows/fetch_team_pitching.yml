@@ -1,0 +1,77 @@
+name: ⚾ Fetch Team Pitching Stats
+
+# Runs daily at 11:00 UTC = 7 AM ET
+# GitHub Actions runners have unrestricted internet access — can reach fangraphs.com
+# Streamlit Cloud cannot reach fangraphs.com (proxy restriction)
+# This workflow bridges that gap: fetch on GH Actions, commit to repo, Streamlit reads file
+
+on:
+  schedule:
+    - cron: "0 11 * * *"   # 7 AM ET daily
+
+  workflow_dispatch:        # Manual trigger (useful for testing)
+    inputs:
+      season:
+        description: "Season year (default: current)"
+        required: false
+        default: ""
+
+jobs:
+  fetch-pitching-stats:
+    name: Fetch FanGraphs Team Pitching
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests pandas lxml html5lib
+
+      - name: Fetch team pitching stats
+        env:
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:   ${{ github.repository }}
+          SEASON:    ${{ github.event.inputs.season }}
+        run: |
+          if [ -n "$SEASON" ]; then
+            python scripts/fetch_team_pitching_action.py "$SEASON"
+          else
+            python scripts/fetch_team_pitching_action.py
+          fi
+
+      - name: Verify output
+        run: |
+          if [ -f "data/team_pitching/latest.json" ]; then
+            echo "✅ File exists"
+            python -c "
+          import json
+          with open('data/team_pitching/latest.json') as f:
+              d = json.load(f)
+          teams = d.get('teams', [])
+          print(f'Teams: {len(teams)}')
+          print(f'Saved at: {d.get(\"saved_at\",\"?\")}')
+          sources = set(t.get(\"source\",\"?\") for t in teams)
+          print(f'Sources: {sources}')
+          # Print top 5 by starter ERA
+          sp_teams = [t for t in teams if t.get(\"starter_era\")]
+          for t in sp_teams[:5]:
+              print(f'  {t[\"team\"]}: SP ERA {t[\"starter_era\"]} | BP ERA {t.get(\"bullpen_era\",\"?\")} | FIP {t.get(\"fip\",\"?\")}')
+            "
+          else
+            echo "⚠️  File not created locally (may have been committed via API)"
+          fi
