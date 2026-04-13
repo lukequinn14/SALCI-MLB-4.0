@@ -1690,20 +1690,17 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     if not home_pitcher or not away_pitcher:
         return  # Can't build card without both pitchers
 
-    home_salci  = home_pitcher.get("salci", 0)
-    away_salci  = away_pitcher.get("salci", 0)
-    home_grade  = home_pitcher.get("salci_grade", "C")
-    away_grade  = away_pitcher.get("salci_grade", "C")
-    home_hand   = home_pitcher.get("pitcher_hand", "R")
-    away_hand   = away_pitcher.get("pitcher_hand", "R")
-    home_exp    = home_pitcher.get("expected", "--")
-    away_exp    = away_pitcher.get("expected", "--")
-    home_prof   = home_pitcher.get("profile_type", "")
-    away_prof   = away_pitcher.get("profile_type", "")
-    home_floor  = home_pitcher.get("floor")
-    away_floor  = away_pitcher.get("floor")
-    home_floor_conf = home_pitcher.get("floor_confidence")
-    away_floor_conf = away_pitcher.get("floor_confidence")
+    away_stuff_block  = _component_block("⚡ STUFF", away_pitcher.get("stuff_score"), is_100_scale=True)
+    away_match_block  = _component_block("🎯 MATCH", away_pitcher.get("matchup_score"), is_100_scale=False)
+    away_work_block   = _component_block("📊 WORK",  away_pitcher.get("workload_score"), is_100_scale=False)
+    away_loc_block    = _component_block("📍 LOC",   away_pitcher.get("location_score"), is_100_scale=True)
+    away_klines       = _klines_html(away_pitcher)
+
+    home_stuff_block  = _component_block("⚡ STUFF", home_pitcher.get("stuff_score"), is_100_scale=True)
+    home_match_block  = _component_block("🎯 MATCH", home_pitcher.get("matchup_score"), is_100_scale=False)
+    home_work_block   = _component_block("📊 WORK",  home_pitcher.get("workload_score"), is_100_scale=False)
+    home_loc_block    = _component_block("📍 LOC",   home_pitcher.get("location_score"), is_100_scale=True)
+    home_klines       = _klines_html(home_pitcher)
 
     # ── helpers ──────────────────────────────────────────────────────────────
     def _comp_color(score, is_100_scale=True):
@@ -1739,9 +1736,17 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
             <div style='font-size:0.65rem;color:#888;'>{label}</div>
             <div style='font-size:1rem;font-weight:bold;color:{color};'>{int(score)}</div>
             <div style='background:#e5e7eb;border-radius:4px;height:5px;margin-top:2px;'>
-                <div style='width:{pct}%;background:{color};border-radius:4px;height:100%;'></div>
+                <div style='width:{pct:.1f}%;background:{color};border-radius:4px;height:100%;'></div>
             </div>
         </div>"""
+
+    def _mini_bar(score, is_100_scale=True):
+        color = _comp_color(score, is_100_scale)
+        if is_100_scale:
+            pct = round(min(100, max(0, (score - 70) * 2)), 1) if score else 0
+        else:
+            pct = round(min(100, max(0, score)), 1) if score else 0
+        return pct, color
 
     def _klines_html(pitcher):
         k_lines = pitcher.get("k_lines", {}) or pitcher.get("lines", {})
@@ -1857,17 +1862,16 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                 {_klines_html(away_pitcher)}
             </div>
             <div style='margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;'>
-                {_component_block("⚡ STUFF", away_pitcher.get("stuff_score"), is_100_scale=True)}
-                {_component_block("🎯 MATCH", away_pitcher.get("matchup_score"), is_100_scale=False)}
-                {_component_block("📊 WORK", away_pitcher.get("workload_score"), is_100_scale=False)}
-                {_component_block("📍 LOC", away_pitcher.get("location_score"), is_100_scale=True)}
+                {away_stuff_block}{away_match_block}{away_work_block}{away_loc_block}
             </div>
-            <div style='margin-top:8px;font-size:0.72rem;color:#9ca3af;'>
+            <div style='margin-top:8px;'>
+                {away_klines}
+            </div>
                 🔥 Hot opp. hitters: {home_hot} &nbsp;|&nbsp;
                 📋 Opp. lineup: {home_lineup_sz}
             </div>
         </div>
-        """)
+        """, unsafe_allow_html=True)
 
     # ── CENTER: edge panel ────────────────────────────────────────────────────
     with col_vs:
@@ -1900,7 +1904,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                 Based on SALCI scores<br>and component analysis
             </div>
         </div>
-        """)
+        """, unsafe_allow_html=True)
 
     # ── HOME pitcher ──────────────────────────────────────────────────────────
     with col_home:
@@ -1939,17 +1943,16 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                 {_klines_html(home_pitcher)}
             </div>
             <div style='margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;'>
-                {_component_block("⚡ STUFF", home_pitcher.get("stuff_score"), is_100_scale=True)}
-                {_component_block("🎯 MATCH", home_pitcher.get("matchup_score"), is_100_scale=False)}
-                {_component_block("📊 WORK", home_pitcher.get("workload_score"), is_100_scale=False)}
-                {_component_block("📍 LOC", home_pitcher.get("location_score"), is_100_scale=True)}
+                {home_stuff_block}{home_match_block}{home_work_block}{home_loc_block}
             </div>
-            <div style='margin-top:8px;font-size:0.72rem;color:#9ca3af;'>
+            <div style='margin-top:8px;'>
+                {home_klines}
+            </div>
                 🔥 Hot opp. hitters: {away_hot} &nbsp;|&nbsp;
                 📋 Opp. lineup: {away_lineup_sz}
             </div>
         </div>
-        """)
+        """, unsafe_allow_html=True)
 
     # ── Footer bar ────────────────────────────────────────────────────────────
     st.markdown(
@@ -1968,7 +1971,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         """,
         unsafe_allow_html=True
     )
-    st.markdown("<div style='margin-bottom:1.5rem;'></div>")
+    st.markdown("<div style='margin-bottom:1.5rem;'></div>", unsafe_allow_html=True)
 
 
 def render_compact_summary(pitcher_results: List[Dict]):
