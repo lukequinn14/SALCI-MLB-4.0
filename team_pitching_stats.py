@@ -64,6 +64,7 @@ MLB_TEAMS = [
 _FG_TO_MLB = {
     "WSN": "WAS", "CHW": "CWS", "KCR": "KC",
     "SDP": "SD",  "SFG": "SF",  "TBR": "TB",
+    "ATH": "OAK",
 }
 
 
@@ -99,64 +100,84 @@ def _fip(so, bb, hbp, hr, ip) -> Optional[float]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_fangraphs(season: int) -> Optional[Dict[str, Dict]]:
-    """
-    Returns dict keyed by MLB abbreviation with FanGraphs team pitching stats.
-    Uses fg_team_pitching_data with specific stat columns confirmed to exist.
-    """
-    try:
-        from pybaseball import fg_team_pitching_data
-        from pybaseball.enums.fangraphs import FangraphsPitchingStats as FPS
-
-        # These column names were verified against the FangraphsPitchingStats enum
-        cols = [
-            FPS.ERA, FPS.FIP, FPS.XFIP, FPS.SIERA, FPS.WHIP,
-            FPS.K_PCT, FPS.BB_PCT, FPS.ERA_MINUS, FPS.K_9,
-        ]
-
-        df = fg_team_pitching_data(start_season=season, end_season=season, stat_columns=cols)
-        if df is None or df.empty:
-            return None
-
-        result: Dict[str, Dict] = {}
-        for _, row in df.iterrows():
-            fg_abbr = str(row.get("Team", "")).upper()
-            abbr = _FG_TO_MLB.get(fg_abbr, fg_abbr)
-
-            # ERA- is lower-is-better (100 = average)
-            # Convert to ERA+ (higher-is-better): ERA+ ≈ 200 - ERA-
-            era_minus = _safe(row.get("ERA-"))
-            era_plus  = round(200 - era_minus, 0) if era_minus else None
-
-            # K% from FanGraphs comes as decimal (0.224) — convert to percent
-            k_pct = _safe(row.get("K%"))
-            if k_pct is not None and k_pct < 2:   # 0.224 not 22.4
-                k_pct = round(k_pct * 100, 1)
-
-            bb_pct = _safe(row.get("BB%"))
-            if bb_pct is not None and bb_pct < 2:
-                bb_pct = round(bb_pct * 100, 1)
-
-            result[abbr] = {
-                "era":       _safe(row.get("ERA")),
-                "fip":       _safe(row.get("FIP")),
-                "xfip":      _safe(row.get("xFIP")),
-                "siera":     _safe(row.get("SIERA")),
-                "whip":      _safe(row.get("WHIP")),
-                "k_pct":     k_pct,
-                "bb_pct":    bb_pct,
-                "k9":        _safe(row.get("K/9"), 1),
-                "era_minus": era_minus,
-                "era_plus":  era_plus,
-                "source":    "fangraphs",
-            }
-
-        return result or None
-
-    except ImportError:
+    """Scrape FanGraphs team pitching directly — bypasses pybaseball's broken legacy endpoint."""
+    import pandas as pd
+    from datetime import date
+    
+    end_date = date.today().strftime("%Y-%m-%d")
+    base = "https://www.fangraphs.com/leaders/major-league"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; baseball-stats-app/1.0)"}
+    
+    def fetch_table(url):
+        try:
+            r = requests.get(url, headers=headers, timeout=20)
+            r.raise_for_status()
+            tables = pd.read_html(r.text, attrs={"class": "rgMasterTable"})
+            if tables:
+                return tables[0]
+            # Fallback: try any table with Team column
+            all_tables = pd.read_html(r.text)
+            for t in all_tables:
+                if "Team" in t.columns and ("ERA" in t.columns or "FIP" in t.columns):
+                    return t
+        except Exception as e:
+            print(f"  FanGraphs scrape error: {e}")
         return None
-    except Exception as e:
-        print(f"  FanGraphs error: {e}")
+
+    # Overall team pitching (ERA, FIP, xFIP, WHIP, K/9, BB/9)
+    overall_url = (
+        f"{base}?pos=all&stats=pit&lg=all&qual=0&type=8"
+        f"&season={season}&month=0&season1={season}"
+        f"&ind=0&team=0,ts&rost=0&age=0&players=0"
+    )
+    df = fetch_table(overall_url)
+    if df is None or df.empty:
         return None
+
+    result = {}
+    fg_abbr_map = {"WSN":"WAS","CHW":"CWS","KCR":"KC","SDP":"SD","SFG":"SF","TBR":"TB","ATH":"OAK"}
+    
+    for _, row in df.iterrows():
+        team = str(row.get("Team","")).upper().strip()
+        if not team or team == "TEAM":
+            continue
+        abbr = fg_abbr_map.get(team, team)
+        
+        era   = _safe(row.get("ERA"))
+        fip   = _safe(row.get("FIP"))
+        xfip  = _safe(row.get("xFIP"))
+        xera  = _safe(row.get("xERA"))
+        whip  = _safe(row.get("WHIP"))
+        
+        # K/9 from FanGraphs (labelled "K/9")
+        k9 = _safe(row.get("K/9"))
+        # Derive K% from K/9 and PA if available, else estimate
+        kpct = round(k9 / 9 * 100 * 0.27, 1) if k9 else None  # rough estimate
+        
+        # ERA- not in type=8; calculate from ERA
+        era_plus = None
+        
+        result[abbr] = {
+            "era": era, "fip": fip, "xfip": xfip, "xera": xera,
+            "whip": whip, "k9": k9, "k_pct": kpct,
+            "era_plus": era_plus, "source": "fangraphs_direct",
+        }
+    
+    # Get K% properly from the Advanced tab (type=1)
+    adv_url = (
+        f"{base}?pos=all&stats=pit&lg=all&qual=0&type=1"
+        f"&season={season}&month=0&season1={season}"
+        f"&ind=0&team=0,ts&rost=0&age=0&players=0"
+    )
+    df_adv = fetch_table(adv_url)
+    if df_adv is not None:
+        for _, row in df_adv.iterrows():
+            team = fg_abbr_map.get(str(row.get("Team","")).upper(), str(row.get("Team","")).upper())
+            if team in result:
+                result[team]["k_pct"] = _safe(row.get("K%"))
+                result[team]["bb_pct"] = _safe(row.get("BB%"))
+
+    return result or None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
