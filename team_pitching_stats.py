@@ -1,34 +1,32 @@
 """
 SALCI Team Pitching Stats Module
 ==================================
-Fetches real, live team pitching data for the dashboard charts.
+Two data sources, merged per team:
 
-Data sources (in priority order):
-  1. pybaseball.team_pitching()  — FanGraphs scrape: FIP, K%, ERA+, xFIP
-  2. MLB Stats API               — Official: ERA, WHIP, K/9, BB/9
-  3. Manual FIP calculation      — Derived from MLB API components when
-                                   pybaseball is unavailable
+  FanGraphs (pybaseball.fg_team_pitching_data):
+      ERA, FIP, xFIP, SIERA, WHIP, K%, BB%, ERA-, K/9
+      Park-adjusted, gold-standard accuracy.
+      ERA- converted to ERA+: ERA+ = 200 - ERA-
 
-FIP formula: FIP = ((13*HR + 3*(BB+HBP) - 2*K) / IP) + FIP_constant
-FIP constant ≈ 3.10  (league-average, keeps FIP on ERA scale)
+  MLB Stats API (statsapi.mlb.com):
+      Starter ERA / Bullpen ERA split (sitCodes parameter).
+      FanGraphs does NOT publish team starter vs bullpen ERA splits,
+      so the MLB API is the only source for these.
 
-ERA+ formula: ERA+ = 100 * (lgERA / teamERA)   [park-adjusted in FanGraphs,
-                                                  raw here without park factor]
-
-Usage:
-    from team_pitching_stats import get_all_team_pitching
-    data = get_all_team_pitching(season=2026)
-    # Returns list of dicts, one per team, sorted by starter ERA
+FIP fallback formula (when pybaseball unavailable):
+    FIP = (13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10
 """
 
 import requests
-import os
+import warnings
 from datetime import datetime
 from typing import Optional, Dict, List
 
-SEASON = datetime.today().year
+warnings.filterwarnings("ignore")
 
-# MLB Stats API team IDs — all 30 teams
+SEASON = datetime.today().year
+FIP_CONSTANT = 3.10
+
 MLB_TEAMS = [
     {"id": 109, "abbr": "ARI", "name": "Arizona Diamondbacks"},
     {"id": 144, "abbr": "ATL", "name": "Atlanta Braves"},
@@ -62,29 +60,161 @@ MLB_TEAMS = [
     {"id": 120, "abbr": "WAS", "name": "Washington Nationals"},
 ]
 
-FIP_CONSTANT = 3.10  # Approximation; FanGraphs recalculates annually
+# FanGraphs uses different abbreviations for these teams
+_FG_TO_MLB = {
+    "WSN": "WAS", "CHW": "CWS", "KCR": "KC",
+    "SDP": "SD",  "SFG": "SF",  "TBR": "TB",
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MLB Stats API  — ERA, WHIP, K9, BB9, raw components for FIP
+# HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _parse_ip(ip_str: str) -> float:
-    """Convert MLB API IP string (e.g. '84.2') to decimal innings."""
+def _safe(val, digits=2) -> Optional[float]:
+    import math
+    try:
+        f = float(val)
+        return None if math.isnan(f) or math.isinf(f) else round(f, digits)
+    except Exception:
+        return None
+
+
+def _parse_ip(ip_str) -> float:
     try:
         parts = str(ip_str).split(".")
-        full = int(parts[0])
-        thirds = int(parts[1]) if len(parts) > 1 else 0
-        return full + thirds / 3
+        return int(parts[0]) + (int(parts[1]) / 3 if len(parts) > 1 else 0)
     except Exception:
         return 0.0
 
 
-def fetch_team_stats_mlb_api(team_id: int, season: int) -> Optional[Dict]:
+def _fip(so, bb, hbp, hr, ip) -> Optional[float]:
+    if not ip or ip <= 0:
+        return None
+    return round((13 * hr + 3 * (bb + hbp) - 2 * so) / ip + FIP_CONSTANT, 2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOURCE 1 — FanGraphs via pybaseball
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_fangraphs(season: int) -> Optional[Dict[str, Dict]]:
     """
-    Fetch season pitching stats for one team from the official MLB Stats API.
-    Returns a dict with ERA, WHIP, K9, BB9, and raw counting stats for FIP.
+    Returns dict keyed by MLB abbreviation with FanGraphs team pitching stats.
+    Uses fg_team_pitching_data with specific stat columns confirmed to exist.
     """
+    try:
+        from pybaseball import fg_team_pitching_data
+        from pybaseball.enums.fangraphs import FangraphsPitchingStats as FPS
+
+        # These column names were verified against the FangraphsPitchingStats enum
+        cols = [
+            FPS.ERA, FPS.FIP, FPS.XFIP, FPS.SIERA, FPS.WHIP,
+            FPS.K_PCT, FPS.BB_PCT, FPS.ERA_MINUS, FPS.K_9,
+        ]
+
+        df = fg_team_pitching_data(start_season=season, end_season=season, stat_columns=cols)
+        if df is None or df.empty:
+            return None
+
+        result: Dict[str, Dict] = {}
+        for _, row in df.iterrows():
+            fg_abbr = str(row.get("Team", "")).upper()
+            abbr = _FG_TO_MLB.get(fg_abbr, fg_abbr)
+
+            # ERA- is lower-is-better (100 = average)
+            # Convert to ERA+ (higher-is-better): ERA+ ≈ 200 - ERA-
+            era_minus = _safe(row.get("ERA-"))
+            era_plus  = round(200 - era_minus, 0) if era_minus else None
+
+            # K% from FanGraphs comes as decimal (0.224) — convert to percent
+            k_pct = _safe(row.get("K%"))
+            if k_pct is not None and k_pct < 2:   # 0.224 not 22.4
+                k_pct = round(k_pct * 100, 1)
+
+            bb_pct = _safe(row.get("BB%"))
+            if bb_pct is not None and bb_pct < 2:
+                bb_pct = round(bb_pct * 100, 1)
+
+            result[abbr] = {
+                "era":       _safe(row.get("ERA")),
+                "fip":       _safe(row.get("FIP")),
+                "xfip":      _safe(row.get("xFIP")),
+                "siera":     _safe(row.get("SIERA")),
+                "whip":      _safe(row.get("WHIP")),
+                "k_pct":     k_pct,
+                "bb_pct":    bb_pct,
+                "k9":        _safe(row.get("K/9"), 1),
+                "era_minus": era_minus,
+                "era_plus":  era_plus,
+                "source":    "fangraphs",
+            }
+
+        return result or None
+
+    except ImportError:
+        return None
+    except Exception as e:
+        print(f"  FanGraphs error: {e}")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOURCE 2 — MLB Stats API
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mlb_split(team_id: int, season: int, sit_code: str) -> Optional[Dict]:
+    """Fetch one role split (startingPitchers / reliefPitchers)."""
+    url = (
+        f"https://statsapi.mlb.com/api/v1/teams/{team_id}/stats"
+        f"?stats=season&season={season}&group=pitching&sitCodes={sit_code}"
+    )
+    try:
+        r = requests.get(url, timeout=12)
+        r.raise_for_status()
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
+        if not splits:
+            return None
+        s   = splits[0]["stat"]
+        ip  = _parse_ip(s.get("inningsPitched", "0.0"))
+        if ip < 1:
+            return None
+        so  = int(s.get("strikeOuts",  0))
+        bb  = int(s.get("baseOnBalls", 0))
+        hbp = int(s.get("hitBatsmen",  0))
+        hr  = int(s.get("homeRuns",    0))
+        er  = int(s.get("earnedRuns",  0))
+        h   = int(s.get("hits",        0))
+        tbf = int(s.get("battersFaced",1))
+
+        era  = _safe(s.get("era")) or (round(er / ip * 9, 2) if ip > 0 else None)
+        whip = _safe(s.get("whip")) or (round((bb + h) / ip, 2) if ip > 0 else None)
+        k_pct = round(so / tbf * 100, 1) if tbf > 0 else None
+
+        return {
+            "era":   era,
+            "whip":  whip,
+            "k_pct": k_pct,
+            "fip":   _fip(so, bb, hbp, hr, ip),
+            "ip":    round(ip, 1),
+        }
+    except Exception:
+        return None
+
+
+def fetch_split(team_id: int, season: int) -> Dict:
+    starter = _mlb_split(team_id, season, "startingPitchers")
+    bullpen = _mlb_split(team_id, season, "reliefPitchers")
+    out = {}
+    if starter:
+        out.update({f"starter_{k}": v for k, v in starter.items()})
+    if bullpen:
+        out.update({f"bullpen_{k}": v for k, v in bullpen.items()})
+    return out
+
+
+def fetch_mlb_overall(team_id: int, season: int) -> Optional[Dict]:
+    """Overall fallback when FanGraphs is unavailable."""
     url = (
         f"https://statsapi.mlb.com/api/v1/teams/{team_id}/stats"
         f"?stats=season&season={season}&group=pitching"
@@ -95,299 +225,99 @@ def fetch_team_stats_mlb_api(team_id: int, season: int) -> Optional[Dict]:
         splits = r.json().get("stats", [{}])[0].get("splits", [])
         if not splits:
             return None
-        s = splits[0]["stat"]
-
+        s  = splits[0]["stat"]
         ip = _parse_ip(s.get("inningsPitched", "0.0"))
         if ip < 1:
             return None
+        so  = int(s.get("strikeOuts",  0))
+        bb  = int(s.get("baseOnBalls", 0))
+        hbp = int(s.get("hitBatsmen",  0))
+        hr  = int(s.get("homeRuns",    0))
+        er  = int(s.get("earnedRuns",  0))
+        h   = int(s.get("hits",        0))
+        tbf = int(s.get("battersFaced",1))
 
-        so  = int(s.get("strikeOuts",    0))
-        bb  = int(s.get("baseOnBalls",   0))
-        hbp = int(s.get("hitBatsmen",    0))
-        hr  = int(s.get("homeRuns",      0))
-        er  = int(s.get("earnedRuns",    0))
-        h   = int(s.get("hits",          0))
-        tbf = int(s.get("battersFaced",  1))
-
-        era  = float(s.get("era",  0)) or (er / ip * 9 if ip > 0 else 0)
-        whip = float(s.get("whip", 0)) or ((bb + h) / ip if ip > 0 else 0)
-        k9   = so / ip * 9
-        bb9  = bb / ip * 9
-        k_pct = so / tbf if tbf > 0 else 0
-
-        # FIP from components
-        fip = ((13 * hr + 3 * (bb + hbp) - 2 * so) / ip + FIP_CONSTANT) if ip > 0 else None
+        era   = _safe(s.get("era")) or round(er / ip * 9, 2)
+        whip  = _safe(s.get("whip")) or round((bb + h) / ip, 2)
+        k_pct = round(so / tbf * 100, 1) if tbf > 0 else None
 
         return {
-            "era":   round(era,  2),
-            "whip":  round(whip, 2),
-            "k9":    round(k9,   1),
-            "bb9":   round(bb9,  1),
-            "k_pct": round(k_pct * 100, 1),
-            "fip":   round(fip, 2) if fip is not None else None,
-            "ip":    round(ip, 1),
-            "so":    so,
-            "bb":    bb,
-            "hr":    hr,
+            "era": era, "whip": whip, "k_pct": k_pct,
+            "fip": _fip(so, bb, hbp, hr, ip),
             "source": "mlb_api",
         }
     except Exception as e:
-        print(f"  MLB API error team {team_id}: {e}")
+        print(f"  MLB API error {team_id}: {e}")
         return None
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Starter vs Bullpen split
-# The MLB Stats API exposes a `startingPitchers` stat split.
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_starter_bullpen_split(team_id: int, season: int) -> Dict:
-    """
-    Returns {"starter_era", "bullpen_era", "starter_whip", "bullpen_whip",
-             "starter_k_pct", "starter_fip"} by querying the 'startingPitchers'
-    and 'reliefPitchers' stat split from the MLB Stats API.
-    Falls back to overall ERA if split is unavailable.
-    """
-    result = {}
-    for role in ("startingPitchers", "reliefPitchers"):
-        url = (
-            f"https://statsapi.mlb.com/api/v1/teams/{team_id}/stats"
-            f"?stats=season&season={season}&group=pitching"
-            f"&sitCodes={role}"
-        )
-        try:
-            r = requests.get(url, timeout=12)
-            splits = r.json().get("stats", [{}])[0].get("splits", [])
-            if not splits:
-                continue
-            s   = splits[0]["stat"]
-            ip  = _parse_ip(s.get("inningsPitched", "0.0"))
-            if ip < 1:
-                continue
-            so  = int(s.get("strikeOuts",   0))
-            bb  = int(s.get("baseOnBalls",  0))
-            hbp = int(s.get("hitBatsmen",   0))
-            hr  = int(s.get("homeRuns",     0))
-            er  = int(s.get("earnedRuns",   0))
-            h   = int(s.get("hits",         0))
-            tbf = int(s.get("battersFaced", 1))
-
-            era  = float(s.get("era", 0)) or (er / ip * 9 if ip > 0 else 0)
-            whip = float(s.get("whip", 0)) or ((bb + h) / ip if ip > 0 else 0)
-            k_pct = so / tbf * 100 if tbf > 0 else 0
-            fip   = (13 * hr + 3 * (bb + hbp) - 2 * so) / ip + FIP_CONSTANT if ip > 0 else None
-
-            prefix = "starter" if role == "startingPitchers" else "bullpen"
-            result[f"{prefix}_era"]   = round(era,  2)
-            result[f"{prefix}_whip"]  = round(whip, 2)
-            result[f"{prefix}_k_pct"] = round(k_pct, 1)
-            if fip is not None:
-                result[f"{prefix}_fip"] = round(fip, 2)
-        except Exception:
-            continue
-    return result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# pybaseball / FanGraphs  — FIP, xFIP, ERA+, K%, BB%
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_fangraphs_team_pitching(season: int) -> Optional[Dict]:
-    """
-    Use pybaseball.team_pitching() to get FanGraphs team stats.
-    Returns dict keyed by team abbreviation: {abbr: {fip, xfip, era_plus, k_pct, ...}}
-    Returns None if pybaseball is not installed.
-    """
-    try:
-        from pybaseball import team_pitching
-        df = team_pitching(season)
-        if df is None or df.empty:
-            return None
-
-        result = {}
-        for _, row in df.iterrows():
-            # FanGraphs uses different team abbreviations — map the common ones
-            fg_team = str(row.get("Team", ""))
-            abbr = _fg_to_mlb_abbr(fg_team)
-
-            result[abbr] = {
-                "fip":      _safe_float(row.get("FIP")),
-                "xfip":     _safe_float(row.get("xFIP")),
-                "era_plus": _safe_float(row.get("ERA+")),
-                "k_pct":    _safe_float(row.get("K%")),   # already as pct (e.g. 22.4)
-                "bb_pct":   _safe_float(row.get("BB%")),
-                "era":      _safe_float(row.get("ERA")),
-                "whip":     _safe_float(row.get("WHIP")),
-                "source":   "fangraphs",
-            }
-        return result if result else None
-    except ImportError:
-        return None
-    except Exception as e:
-        print(f"  pybaseball error: {e}")
-        return None
-
-
-def _safe_float(val) -> Optional[float]:
-    try:
-        f = float(val)
-        return None if (f != f) else round(f, 2)  # NaN check
-    except Exception:
-        return None
-
-
-# FanGraphs uses slightly different abbreviations for a handful of teams
-_FG_ABBR_MAP = {
-    "WSN": "WAS", "CHW": "CWS", "KCR": "KC",  "SDP": "SD",
-    "SFG": "SF",  "TBR": "TB",  "LAA": "LAA", "NYY": "NYY",
-}
-
-def _fg_to_mlb_abbr(fg: str) -> str:
-    return _FG_ABBR_MAP.get(fg.upper(), fg.upper())
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# League ERA for ERA+ calculation  (when FanGraphs not available)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_league_era(season: int) -> float:
-    """Fetch MLB-wide ERA from the stats API for ERA+ calculation."""
     url = (
-        f"https://statsapi.mlb.com/api/v1/stats"
-        f"?stats=season&season={season}&group=pitching&gameType=R"
-        f"&sportId=1&limit=1&playerPool=ALL"
+        f"https://statsapi.mlb.com/api/v1/stats?stats=season&season={season}"
+        f"&group=pitching&gameType=R&sportId=1&limit=1&playerPool=ALL"
     )
     try:
         r = requests.get(url, timeout=10)
-        splits = r.json().get("stats", [{}])[0].get("splits", [])
-        if splits:
-            era = float(splits[0]["stat"].get("era", 4.20))
-            return era
+        sp = r.json().get("stats", [{}])[0].get("splits", [])
+        if sp:
+            return float(sp[0]["stat"].get("era", 4.20))
     except Exception:
         pass
-    return 4.20  # 2026 approximate fallback
+    return 4.20
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN: Combine both sources into one clean record per team
+# MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_all_team_pitching(season: int = None) -> List[Dict]:
-    """
-    Fetch and merge team pitching stats from MLB API + FanGraphs.
-
-    Returns a list of dicts sorted by starter ERA (ascending), each containing:
-      team, name, era, starter_era, bullpen_era, whip, starter_whip,
-      bullpen_whip, fip, k_pct, starter_k_pct, era_plus, source_note
-    """
     if season is None:
         season = SEASON
 
-    print(f"Fetching team pitching stats for {season}...")
+    print(f"[team_pitching] Loading {season}…")
+    fg      = fetch_fangraphs(season)
+    lg_era  = fetch_league_era(season)
 
-    # Step 1: Try FanGraphs (best source for FIP, ERA+, K%)
-    fg_data = fetch_fangraphs_team_pitching(season)
-    if fg_data:
-        print(f"  FanGraphs data loaded for {len(fg_data)} teams")
+    if fg:
+        print(f"  FanGraphs: {len(fg)} teams ✓")
     else:
-        print("  pybaseball unavailable — using MLB API only")
-
-    # Step 2: League ERA for ERA+ calc
-    lg_era = fetch_league_era(season)
-    print(f"  League ERA: {lg_era}")
+        print("  FanGraphs unavailable — MLB API fallback")
 
     results = []
     for team in MLB_TEAMS:
-        tid   = team["id"]
-        abbr  = team["abbr"]
-        name  = team["name"]
+        tid  = team["id"]
+        abbr = team["abbr"]
 
-        # Overall stats from MLB API
-        overall = fetch_team_stats_mlb_api(tid, season)
+        split    = fetch_split(tid, season)
+        fg_t     = (fg or {}).get(abbr, {})
+        mlb_fall = None if fg_t else fetch_mlb_overall(tid, season)
 
-        # Starter / bullpen split from MLB API
-        split = fetch_starter_bullpen_split(tid, season)
-
-        # FanGraphs overlay
-        fg = (fg_data or {}).get(abbr, {})
-
-        if not overall and not split:
-            print(f"  No data for {abbr} — skipping")
+        if not fg_t and not mlb_fall and not split:
             continue
 
-        # Merge: prefer FanGraphs for FIP/K%/ERA+, MLB API for ERA/WHIP
-        era         = (overall or {}).get("era")
-        whip        = (overall or {}).get("whip")
-        fip         = fg.get("fip") or (overall or {}).get("fip")
-        k_pct       = fg.get("k_pct") or (overall or {}).get("k_pct")
-        era_plus    = fg.get("era_plus") or (
-            round(100 * lg_era / era, 0) if era and era > 0 else None
+        era      = fg_t.get("era")       or (mlb_fall or {}).get("era")
+        whip     = fg_t.get("whip")      or (mlb_fall or {}).get("whip")
+        fip      = fg_t.get("fip")       or (mlb_fall or {}).get("fip")
+        xfip     = fg_t.get("xfip")
+        siera    = fg_t.get("siera")
+        k_pct    = fg_t.get("k_pct")     or (mlb_fall or {}).get("k_pct")
+        bb_pct   = fg_t.get("bb_pct")
+        era_minus= fg_t.get("era_minus")
+        era_plus = fg_t.get("era_plus") or (
+            round(100 * lg_era / era, 0) if (era and era > 0) else None
         )
-
-        starter_era   = split.get("starter_era",   era)
-        bullpen_era   = split.get("bullpen_era",    era)
-        starter_whip  = split.get("starter_whip",  whip)
-        bullpen_whip  = split.get("bullpen_whip",   whip)
-        starter_k_pct = split.get("starter_k_pct", k_pct)
-        starter_fip   = split.get("starter_fip",   fip)
-
-        source_note = "FanGraphs + MLB API" if fg else "MLB API"
 
         results.append({
-            "team":          abbr,
-            "name":          name,
-            # Overall
-            "era":           era,
-            "whip":          whip,
-            "fip":           fip,
-            "k_pct":         k_pct,
-            "era_plus":      era_plus,
-            # Starter split
-            "starter_era":   starter_era,
-            "starter_whip":  starter_whip,
-            "starter_k_pct": starter_k_pct,
-            "starter_fip":   starter_fip,
-            # Bullpen split
-            "bullpen_era":   bullpen_era,
-            "bullpen_whip":  bullpen_whip,
-            # Meta
-            "source":        source_note,
-            "season":        season,
+            "team":  abbr,
+            "name":  team["name"],
+            "era":   era, "whip": whip, "fip": fip,
+            "xfip":  xfip, "siera": siera,
+            "k_pct": k_pct, "bb_pct": bb_pct,
+            "era_minus": era_minus, "era_plus": era_plus,
+            **split,
+            "source": "FanGraphs + MLB API" if fg_t else "MLB API only",
         })
 
-    # Sort by starter ERA ascending (best first)
-    results.sort(key=lambda x: (x.get("starter_era") or 99))
-    print(f"  Done — {len(results)} teams loaded")
+    results.sort(key=lambda x: (x.get("starter_era") or x.get("era") or 99))
+    print(f"  {len(results)} teams ready")
     return results
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Streamlit-cached wrapper  (import this in your Streamlit tab)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def get_team_pitching_cached(season: int = None):
-    """
-    Call this from Streamlit with @st.cache_data on the calling side, e.g.:
-
-        @st.cache_data(ttl=3600)
-        def load_pitching():
-            return get_team_pitching_cached()
-
-    Separated so the module stays importable in non-Streamlit scripts too.
-    """
-    return get_all_team_pitching(season)
-
-
-if __name__ == "__main__":
-    data = get_all_team_pitching(2026)
-    print(f"\n{'Team':<5} {'Starter ERA':<13} {'Bullpen ERA':<13} {'FIP':<7} {'K%':<7} {'ERA+'}")
-    print("-" * 55)
-    for t in data:
-        print(
-            f"{t['team']:<5} "
-            f"{str(t.get('starter_era','—')):<13} "
-            f"{str(t.get('bullpen_era','—')):<13} "
-            f"{str(t.get('fip','—')):<7} "
-            f"{str(t.get('k_pct','—')):<7} "
-            f"{t.get('era_plus','—')}"
-        )
