@@ -509,50 +509,44 @@ def get_game_boxscore(game_pk: int) -> Optional[Dict]:
 
 def get_confirmed_lineup(game_pk: int, team_side: str) -> Tuple[List[Dict], bool]:
     """
-    Extract confirmed lineup using a two-source strategy:
-    1. /game/{pk}/lineups  — works pre-game (primary)
-    2. /feed/live boxscore — works in-game/post-game (fallback)
-    
-    Returns: (lineup_list, is_confirmed)
+    Enhanced lineup fetch:
+    - Returns lineup even if PARTIAL
+    - Marks confirmed only if >=9 hitters
+    - Enables SALCI to use partial lineups
     """
-    # ── SOURCE 1: Dedicated lineups endpoint (pre-game) ─────────────────────
+
+    lineup = []
+
+    # ── SOURCE 1: Pregame lineups endpoint ─────────────────────
     lineup_data = get_game_lineups_api(game_pk)
+
     if lineup_data:
-        # The lineups endpoint returns {"homeBatters": [...], "awayBatters": [...]}
         key = "homeBatters" if team_side == "home" else "awayBatters"
         batters = lineup_data.get(key, [])
-        
-        if batters and len(batters) >= 9:
-            lineup = []
-            for i, player in enumerate(batters):
-                lineup.append({
-                    "id": player.get("id"),
-                    "name": player.get("fullName", player.get("name", "Unknown")),
-                    "position": player.get("primaryPosition", {}).get("abbreviation", ""),
-                    "batting_order": i + 1,
-                    "bat_side": player.get("batSide", {}).get("code", "R"),
-                })
-            return lineup, True
 
-    # ── SOURCE 2: Live feed boxscore (in-game / post-game fallback) ──────────
+        for i, player in enumerate(batters):
+            lineup.append({
+                "id": player.get("id"),
+                "name": player.get("fullName", player.get("name", "Unknown")),
+                "position": player.get("primaryPosition", {}).get("abbreviation", ""),
+                "batting_order": i + 1,
+                "bat_side": player.get("batSide", {}).get("code", "R"),
+            })
+
+        if lineup:
+            return lineup, len(lineup) >= 9  # ✅ partial allowed
+
+    # ── SOURCE 2: Live game feed fallback ─────────────────────
     data = get_game_boxscore(game_pk)
     if not data:
         return [], False
 
     try:
-        game_data = data.get("gameData", {})
-        live_data = data.get("liveData", {})
-        boxscore = live_data.get("boxscore", {})
-
-        teams = boxscore.get("teams", {})
-        team_data = teams.get(team_side, {})
+        boxscore = data.get("liveData", {}).get("boxscore", {})
+        team_data = boxscore.get("teams", {}).get(team_side, {})
 
         batting_order = team_data.get("battingOrder", [])
-        if not batting_order:
-            return [], False
-
         players = team_data.get("players", {})
-        lineup = []
 
         for i, player_id in enumerate(batting_order):
             player_key = f"ID{player_id}"
@@ -560,23 +554,21 @@ def get_confirmed_lineup(game_pk: int, team_side: str) -> Tuple[List[Dict], bool
             person = player_info.get("person", {})
             position = player_info.get("position", {})
 
-            all_players = game_data.get("players", {})
-            full_player = all_players.get(player_key, {})
-            bat_side = full_player.get("batSide", {}).get("code", "R")
-
             lineup.append({
                 "id": player_id,
                 "name": person.get("fullName", "Unknown"),
                 "position": position.get("abbreviation", ""),
                 "batting_order": i + 1,
-                "bat_side": bat_side
+                "bat_side": "R"
             })
 
-        return lineup, len(lineup) >= 9
+        if lineup:
+            return lineup, len(lineup) >= 9
 
     except Exception as e:
-        st.warning(f"Error parsing lineup: {e}")
-        return [], False
+        st.warning(f"Lineup parse error: {e}")
+
+    return [], False
 
 # ----------------------------
 # API Functions - Pitchers
@@ -2024,6 +2016,13 @@ def main():
             "home": {"lineup": home_lineup, "confirmed": home_confirmed},
             "away": {"lineup": away_lineup, "confirmed": away_confirmed}
         }
+
+    for game in games:
+    game_pk = game["game_pk"]
+    game["lineups_available"] = (
+        bool(lineup_status[game_pk]["home"]["lineup"]) or
+        bool(lineup_status[game_pk]["away"]["lineup"])
+    )
     
     confirmed_count = sum(1 for g in games 
                          if lineup_status[g["game_pk"]]["home"]["confirmed"] 
@@ -2138,7 +2137,7 @@ def main():
                         opp_lineup_info = game_lineups[opp_side]
                         lineup_hitter_stats = None
                         
-                        if opp_lineup_info.get('confirmed') and opp_lineup_info.get('lineup'):
+                        if opp_lineup_info.get('lineup'):
                             lineup_hitter_stats = []
                             for player in opp_lineup_info['lineup']:
                                 h_recent = get_hitter_recent_stats(player['id'], 7)
