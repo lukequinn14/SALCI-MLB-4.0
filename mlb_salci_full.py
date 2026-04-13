@@ -2032,8 +2032,7 @@ def main():
     if confirmed_count == 0:
         st.warning("⏳ **No lineups confirmed yet.** Lineups are typically released 1-2 hours before game time.")
     else:
-        confirmed_count = sum(1 for p in all_pitcher_results if p.get("lineup_confirmed", False))
-        st.success(f"✅ **{confirmed_count} games** have confirmed lineups")
+        st.info(f"✅ **{confirmed_count} games** have confirmed lineups")
     
     # Process all data — try pre-computed JSON first, fall back to live compute
     all_pitcher_results = []
@@ -2297,29 +2296,7 @@ def main():
     all_pitcher_results.sort(key=lambda x: x["salci"], reverse=True)
     all_hitter_results.sort(key=lambda x: x["score"], reverse=True)
 
-    # ── LIVE LINEUP RECONCILIATION ──────────────────────────────────────────────
-    # The pre-computed JSON may be stale. Always override with live lineup_status.
-    # This is the source of truth for "lineup_confirmed".
     
-    # ── LIVE LINEUP RECONCILIATION ──────────────────────────────────────────────
-    # Pre-computed JSON may have stale lineup_confirmed values.
-    # Always override with the live lineup_status (source of truth).
-    
-    game_home_teams = {g["game_pk"]: g["home_team"] for g in games}
-    
-    for result in all_pitcher_results:
-        gpk = result.get("game_pk")
-        if gpk and gpk in lineup_status:
-            home_team = game_home_teams.get(gpk, "")
-            opp_side = "away" if result.get("team") == home_team else "home"
-            result["lineup_confirmed"] = lineup_status[gpk][opp_side]["confirmed"]
-    
-    for result in all_hitter_results:
-        gpk = result.get("game_pk")
-        if gpk and gpk in lineup_status:
-            home_team = game_home_teams.get(gpk, "")
-            hitter_side = "home" if result.get("team") == home_team else "away"
-            result["lineup_confirmed"] = lineup_status[gpk][hitter_side]["confirmed"]
 
     
     # ======================
