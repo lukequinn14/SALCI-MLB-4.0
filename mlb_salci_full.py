@@ -2300,6 +2300,10 @@ def main():
     # The pre-computed JSON may be stale. Always override with live lineup_status.
     # This is the source of truth for "lineup_confirmed".
     
+    # ── LIVE LINEUP RECONCILIATION ──────────────────────────────────────────────
+    # Pre-computed JSON may have stale lineup_confirmed values.
+    # Always override with the live lineup_status (source of truth).
+    
     game_home_teams = {g["game_pk"]: g["home_team"] for g in games}
     
     for result in all_pitcher_results:
