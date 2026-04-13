@@ -2295,6 +2295,27 @@ def main():
     # Sort results
     all_pitcher_results.sort(key=lambda x: x["salci"], reverse=True)
     all_hitter_results.sort(key=lambda x: x["score"], reverse=True)
+
+    # ── LIVE LINEUP RECONCILIATION ──────────────────────────────────────────────
+    # The pre-computed JSON may be stale. Always override with live lineup_status.
+    # This is the source of truth for "lineup_confirmed".
+    
+    game_home_teams = {g["game_pk"]: g["home_team"] for g in games}
+    
+    for result in all_pitcher_results:
+        gpk = result.get("game_pk")
+        if gpk and gpk in lineup_status:
+            home_team = game_home_teams.get(gpk, "")
+            opp_side = "away" if result.get("team") == home_team else "home"
+            result["lineup_confirmed"] = lineup_status[gpk][opp_side]["confirmed"]
+    
+    for result in all_hitter_results:
+        gpk = result.get("game_pk")
+        if gpk and gpk in lineup_status:
+            home_team = game_home_teams.get(gpk, "")
+            hitter_side = "home" if result.get("team") == home_team else "away"
+            result["lineup_confirmed"] = lineup_status[gpk][hitter_side]["confirmed"]
+
     
     # ======================
     # TAB 1: Pitcher Analysis
