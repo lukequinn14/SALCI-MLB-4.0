@@ -275,16 +275,9 @@ def render_pitching_dashboard():
     # ── Source badge ──────────────────────────────────────────────────────────
     fg_count = sum(1 for d in data if "FanGraphs" in d.get("source", ""))
     if fg_count > 0:
-        st.success(
-            f"✅ **{fg_count}/30 teams** loaded from FanGraphs (park-adjusted FIP, xFIP, K%, ERA+)  "
-            f"+ MLB Stats API starter/bullpen split"
-        )
+        st.success(f"✅ Live FanGraphs data loaded for {fg_count}/30 teams — ERA, FIP, xFIP, starter/bullpen split")
     else:
-        st.warning(
-            "⚠️ FanGraphs unavailable — using MLB Stats API only.  \n"
-            "FIP is calculated from raw components. ERA+ has no park adjustment.  \n"
-            "Make sure `pybaseball>=2.2.0` is in your `requirements.txt`."
-        )
+        st.warning("⚠️ FanGraphs scrape failed — showing MLB Stats API data only.")
 
     st.markdown("---")
 
