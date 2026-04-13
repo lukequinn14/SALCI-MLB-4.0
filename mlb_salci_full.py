@@ -2032,7 +2032,8 @@ def main():
     if confirmed_count == 0:
         st.warning("⏳ **No lineups confirmed yet.** Lineups are typically released 1-2 hours before game time.")
     else:
-        st.info(f"✅ **{confirmed_count} games** have confirmed lineups")
+        confirmed_count = sum(1 for p in all_pitcher_results if p.get("lineup_confirmed", False))
+        st.success(f"✅ **{confirmed_count} games** have confirmed lineups")
     
     # Process all data — try pre-computed JSON first, fall back to live compute
     all_pitcher_results = []
