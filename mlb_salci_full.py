@@ -1867,7 +1867,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                 📋 Opp. lineup: {home_lineup_sz}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
     # ── CENTER: edge panel ────────────────────────────────────────────────────
     with col_vs:
@@ -1900,7 +1900,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                 Based on SALCI scores<br>and component analysis
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
     # ── HOME pitcher ──────────────────────────────────────────────────────────
     with col_home:
@@ -1949,7 +1949,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                 📋 Opp. lineup: {away_lineup_sz}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
     # ── Footer bar ────────────────────────────────────────────────────────────
     st.markdown(
@@ -1968,7 +1968,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         """,
         unsafe_allow_html=True
     )
-    st.markdown("<div style='margin-bottom:1.5rem;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom:1.5rem;'></div>")
 
 
 def render_compact_summary(pitcher_results: List[Dict]):
