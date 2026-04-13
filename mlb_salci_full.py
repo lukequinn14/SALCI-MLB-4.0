@@ -483,8 +483,23 @@ def get_games_by_date(date_str: str) -> List[Dict]:
         return []
 
 @st.cache_data(ttl=60)
+def get_game_lineups_api(game_pk: int) -> Optional[Dict]:
+    """
+    Fetch lineups from the dedicated MLB lineups endpoint.
+    This works PRE-GAME, unlike the live feed battingOrder which only
+    populates once the game starts.
+    """
+    url = f"https://statsapi.mlb.com/api/v1/game/{game_pk}/lineups"
+    try:
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        return data
+    except Exception as e:
+        return None
+
+@st.cache_data(ttl=60)
 def get_game_boxscore(game_pk: int) -> Optional[Dict]:
-    """Fetch live game data including lineups."""
+    """Fetch live game data including lineups (in-game/post-game fallback)."""
     url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
     try:
         res = requests.get(url, timeout=15)
@@ -494,40 +509,61 @@ def get_game_boxscore(game_pk: int) -> Optional[Dict]:
 
 def get_confirmed_lineup(game_pk: int, team_side: str) -> Tuple[List[Dict], bool]:
     """
-    Extract confirmed lineup from game feed.
+    Extract confirmed lineup using a two-source strategy:
+    1. /game/{pk}/lineups  — works pre-game (primary)
+    2. /feed/live boxscore — works in-game/post-game (fallback)
     
     Returns: (lineup_list, is_confirmed)
-    - is_confirmed = True if 9+ players in batting order
     """
+    # ── SOURCE 1: Dedicated lineups endpoint (pre-game) ─────────────────────
+    lineup_data = get_game_lineups_api(game_pk)
+    if lineup_data:
+        # The lineups endpoint returns {"homeBatters": [...], "awayBatters": [...]}
+        key = "homeBatters" if team_side == "home" else "awayBatters"
+        batters = lineup_data.get(key, [])
+        
+        if batters and len(batters) >= 9:
+            lineup = []
+            for i, player in enumerate(batters):
+                lineup.append({
+                    "id": player.get("id"),
+                    "name": player.get("fullName", player.get("name", "Unknown")),
+                    "position": player.get("primaryPosition", {}).get("abbreviation", ""),
+                    "batting_order": i + 1,
+                    "bat_side": player.get("batSide", {}).get("code", "R"),
+                })
+            return lineup, True
+
+    # ── SOURCE 2: Live feed boxscore (in-game / post-game fallback) ──────────
     data = get_game_boxscore(game_pk)
     if not data:
         return [], False
-    
+
     try:
         game_data = data.get("gameData", {})
         live_data = data.get("liveData", {})
         boxscore = live_data.get("boxscore", {})
-        
+
         teams = boxscore.get("teams", {})
         team_data = teams.get(team_side, {})
-        
+
         batting_order = team_data.get("battingOrder", [])
         if not batting_order:
             return [], False
-        
+
         players = team_data.get("players", {})
         lineup = []
-        
+
         for i, player_id in enumerate(batting_order):
             player_key = f"ID{player_id}"
             player_info = players.get(player_key, {})
             person = player_info.get("person", {})
             position = player_info.get("position", {})
-            
+
             all_players = game_data.get("players", {})
             full_player = all_players.get(player_key, {})
             bat_side = full_player.get("batSide", {}).get("code", "R")
-            
+
             lineup.append({
                 "id": player_id,
                 "name": person.get("fullName", "Unknown"),
@@ -535,9 +571,9 @@ def get_confirmed_lineup(game_pk: int, team_side: str) -> Tuple[List[Dict], bool
                 "batting_order": i + 1,
                 "bat_side": bat_side
             })
-        
+
         return lineup, len(lineup) >= 9
-        
+
     except Exception as e:
         st.warning(f"Error parsing lineup: {e}")
         return [], False
