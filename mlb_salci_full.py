@@ -2716,7 +2716,11 @@ def main():
                     st.markdown("---")
                     st.markdown("### ⚔️ Head-to-Head Matchup Cards")
                     st.caption("Side-by-side SALCI breakdown for each game — mirrors the pitcher cards above.")
-                    for game_obj in matchup_games:
+                    matchup_games_sorted = sorted(
+                        matchup_games,
+                        key=lambda g: g.get("game_time", g.get("game_datetime", "23:59"))
+                    )
+                    for game_obj in matchup_games_sorted:
                         render_matchup_card(game_obj, filtered_pitchers, lineup_status)
 
             render_compact_summary(all_pitcher_results)
