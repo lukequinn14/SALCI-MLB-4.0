@@ -1,0 +1,83 @@
+name: 📊 Generate Yesterday's Reflection
+
+# Runs every day at 04:00 UTC = 11:00 PM ET (after all West Coast games finish)
+# Also supports manual trigger with optional date override for backfilling
+
+on:
+  schedule:
+    # 04:00 UTC = 11:00 PM ET (standard) / midnight ET (daylight saving)
+    # All MLB games are complete by this time
+    - cron: "0 4 * * *"
+
+  workflow_dispatch:
+    inputs:
+      date_override:
+        description: "Date to generate reflection for (YYYY-MM-DD). Leave blank for yesterday."
+        required: false
+        default: ""
+
+jobs:
+  generate-reflection:
+    name: Fetch Results & Build Reflection
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # Required to commit reflection files back to the repo
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 2. Python ─────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # ── 3. Dependencies ───────────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests
+
+      # ── 4. Run the reflection script ──────────────────────────────────────
+      - name: Generate reflection
+        env:
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:   ${{ github.repository }}
+          DATE_OVERRIDE: ${{ github.event.inputs.date_override }}
+        run: |
+          if [ -n "$DATE_OVERRIDE" ]; then
+            echo "Running with date override: $DATE_OVERRIDE"
+            python scripts/generate_reflection.py "$DATE_OVERRIDE"
+          else
+            python scripts/generate_reflection.py
+          fi
+
+      # ── 5. Verify ─────────────────────────────────────────────────────────
+      - name: Verify output
+        run: |
+          YESTERDAY=$(python -c "from datetime import datetime, timedelta; print((datetime.today()-timedelta(days=1)).strftime('%Y-%m-%d'))")
+          TARGET="${{ github.event.inputs.date_override }}"
+          CHECK_DATE="${TARGET:-$YESTERDAY}"
+
+          if [ -f "data/reflections/${CHECK_DATE}.json" ]; then
+            echo "✅ Reflection file created for $CHECK_DATE"
+            python -c "
+          import json
+          with open('data/reflections/${CHECK_DATE}.json') as f:
+              r = json.load(f)
+          s = r.get('summary', {})
+          print(f\"  Games tracked : {r.get('games_tracked', 0)}\")
+          print(f\"  Accuracy      : {s.get('accuracy_pct', 'N/A')}%\")
+          print(f\"  Avg K delta   : {s.get('avg_k_delta', 'N/A')}\")
+          print(f\"  Tendency      : {s.get('tendency', 'N/A')}\")
+            "
+          else
+            echo "⚠️  No local file found (may have been committed directly via API)"
+          fi
