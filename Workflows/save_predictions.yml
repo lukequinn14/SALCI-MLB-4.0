@@ -1,0 +1,75 @@
+name: 💾 Save Daily Predictions
+
+# Runs every day at 14:00 UTC = 10:00 AM ET (adjust for DST: 13:00 UTC in summer)
+# Also supports manual trigger with optional date override
+
+on:
+  schedule:
+    # 10 AM ET — before most lineups are official, but schedule is known
+    # ET = UTC-5 (standard) / UTC-4 (daylight saving)
+    # Use 13:00 UTC to cover both (9 AM ET in summer, 8 AM in winter)
+    - cron: "0 13 * * *"
+
+  workflow_dispatch:
+    inputs:
+      date_override:
+        description: "Date to save predictions for (YYYY-MM-DD). Leave blank for today."
+        required: false
+        default: ""
+
+jobs:
+  save-predictions:
+    name: Compute & Save SALCI Predictions
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # Required to commit data files back to the repo
+
+    steps:
+      # ── 1. Checkout the full repo ──────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so we can push a commit
+          fetch-depth: 0
+          # Use a PAT if you need to trigger downstream workflows,
+          # otherwise the default GITHUB_TOKEN is fine
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 2. Set up Python ───────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests
+
+      # ── 4. Run the prediction script ──────────────────────────────────────
+      - name: Save predictions
+        env:
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:   ${{ github.repository }}
+          DATE_OVERRIDE: ${{ github.event.inputs.date_override }}
+        run: |
+          if [ -n "$DATE_OVERRIDE" ]; then
+            echo "Running with date override: $DATE_OVERRIDE"
+            python scripts/save_predictions.py "$DATE_OVERRIDE"
+          else
+            python scripts/save_predictions.py
+          fi
+
+      # ── 5. Verify the file was created ────────────────────────────────────
+      - name: Verify output
+        run: |
+          DATE=$(python -c "from datetime import datetime; print(datetime.today().strftime('%Y-%m-%d'))")
+          if [ -f "data/predictions/${DATE}.json" ]; then
+            echo "✅ Predictions file created for $DATE"
+            wc -c "data/predictions/${DATE}.json"
+          else
+            echo "⚠️  No local file found (may have been committed directly via API)"
+          fi
