@@ -18,7 +18,7 @@ USAGE  (in mlb_salci_full.py)
     with tab6:
         render_yesterday_tab()
 """
-
+import pandas as pd
 import json
 import os
 import requests
