@@ -1673,18 +1673,31 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
         st.markdown("---")
 
 # Build lookup for pitchers by game
-game_pitchers = {}
-
-for p in all_pitcher_results:
-    gpk = p["game_pk"]
-    if gpk not in game_pitchers:
-        game_pitchers[gpk] = {"home": None, "away": None}
+def get_pitchers_for_game(game_pk, all_pitchers):
+    home, away = None, None
     
-    # Determine home vs away
-    if p["team"] == game["teams"]["home"]["name"]:
-        game_pitchers[gpk]["home"] = p
-    else:
-        game_pitchers[gpk]["away"] = p
+    for p in all_pitchers:
+        if p["game_pk"] != game_pk:
+            continue
+        
+        if p["team"] == p.get("home_team"):
+            home = p
+        else:
+            away = p
+    
+    return home, awaydef get_pitchers_for_game(game_pk, all_pitchers):
+    home, away = None, None
+    
+    for p in all_pitchers:
+        if p["game_pk"] != game_pk:
+            continue
+        
+        if p["team"] == p.get("home_team"):
+            home = p
+        else:
+            away = p
+    
+    return home, away
 
 def render_matchup_card(game, home_pitcher, away_pitcher, lineup_status):
     """Render head-to-head matchup card with SALCI + lineup intelligence."""
