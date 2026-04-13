@@ -242,95 +242,193 @@ def _render_rolling_accuracy():
 # MAIN RENDER FUNCTION  ← call this from mlb_salci_full.py
 # ─────────────────────────────────────────────────────────────────────────────
 
+def fetch_actual_results_for_date(date_str: str) -> List[Dict]:
+    """Pull real box scores from MLB API for any completed date."""
+    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date_str}&hydrate=linescore,decisions"
+    try:
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        if not data.get("dates"):
+            return []
+        results = []
+        for game in data["dates"][0].get("games", []):
+            if game.get("status", {}).get("abstractGameState", "") != "Final":
+                continue
+            game_pk = game.get("gamePk")
+            try:
+                box = requests.get(
+                    f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore", timeout=15
+                ).json()
+            except Exception:
+                continue
+            for side in ("home", "away"):
+                team_data = box.get("teams", {}).get(side, {})
+                pitchers  = team_data.get("pitchers", [])
+                players   = team_data.get("players", {})
+                if not pitchers:
+                    continue
+                # Only starting pitcher (first in list)
+                starter_id   = pitchers[0]
+                starter_data = players.get(f"ID{starter_id}", {})
+                stats        = starter_data.get("stats", {}).get("pitching", {})
+                if not stats:
+                    continue
+                ip_raw = str(stats.get("inningsPitched", "0.0"))
+                parts  = ip_raw.split(".")
+                ip     = int(parts[0]) + (int(parts[1]) / 3 if len(parts) > 1 else 0)
+                # Skip bulk relievers (< 2 IP and < 6 BF = not a starter)
+                tbf = int(stats.get("battersFaced", 0))
+                if ip < 1.0 and tbf < 5:
+                    continue
+                results.append({
+                    "pitcher_name": starter_data.get("person", {}).get("fullName", "Unknown"),
+                    "team":         team_data.get("team", {}).get("name", ""),
+                    "actual_ks":    int(stats.get("strikeOuts", 0)),
+                    "actual_ip":    round(ip, 1),
+                    "pitch_count":  int(stats.get("numberOfPitches", 0)),
+                    "opponent":     box.get("teams", {}).get(
+                        "away" if side == "home" else "home", {}
+                    ).get("team", {}).get("name", ""),
+                })
+        return results
+    except Exception as e:
+        return []
+
+
 def render_yesterday_tab():
-    """
-    Full Yesterday tab UI.
-    Automatically loads the previous day's reflection from data/reflections/.
-    Zero user action required.
-    """
     yesterday     = datetime.today() - timedelta(days=1)
     yesterday_str = yesterday.strftime("%Y-%m-%d")
-    display_date  = yesterday.strftime("%A, %B %-d")  # e.g. "Sunday, April 13"
 
     st.markdown("### 📈 Yesterday's Reflection")
-    st.markdown(
-        f"*Predictions vs actual results — automatically generated every night.*  \n"
-        f"**Date:** {display_date}"
-    )
+    st.markdown("*Actual pitcher results + SALCI analysis for any date.*")
     st.markdown("---")
 
-    # ── Date picker (optional — lets users browse history) ──────────────────
-    with st.expander("🗓️ Browse a different date", expanded=False):
-        selected = st.date_input(
-            "Select date",
-            value=yesterday,
-            max_value=yesterday,
-            key="reflection_date_picker",
-        )
-        if selected:
-            yesterday_str = selected.strftime("%Y-%m-%d")
-            display_date  = selected.strftime("%A, %B %-d")
+    # ── Date picker ──────────────────────────────────────────────────────────
+    selected = st.date_input(
+        "📅 Select date to analyze",
+        value=yesterday,
+        max_value=yesterday,
+        key="reflection_date_picker",
+    )
+    date_str     = selected.strftime("%Y-%m-%d")
+    display_date = selected.strftime("%A, %B %-d, %Y")
+    st.markdown(f"**Showing:** {display_date}")
+    st.markdown("---")
 
-    # ── Load reflection ──────────────────────────────────────────────────────
-    reflection = load_reflection(yesterday_str)
+    # ── Try cached reflection first, then compute live ───────────────────────
+    reflection = load_reflection(date_str)
 
     if reflection is None:
-        st.warning(
-            f"⏳ No reflection found for **{display_date}** yet.  \n\n"
-            "Reflections are generated automatically each night after all games finish (~11 PM ET).  \n"
-            "If you're seeing this during the day, yesterday's reflection will appear tonight."
-        )
-        _render_rolling_accuracy()
-        return
+        with st.spinner(f"Fetching MLB box scores for {display_date}…"):
+            results = fetch_actual_results_for_date(date_str)
 
-    if reflection.get("status") == "no_overlap":
-        st.info(
-            f"ℹ️ Reflection for {display_date} exists but no predictions matched "
-            "box-score results (possible off-day or data issue)."
-        )
-        _render_rolling_accuracy()
-        return
+        if not results:
+            st.warning(
+                f"No completed games found for **{display_date}**. "
+                "Either games haven't finished yet, or it was an off-day."
+            )
+            return
 
-    # ── Summary KPIs ─────────────────────────────────────────────────────────
-    summary = reflection.get("summary", {})
-    _render_summary_metrics(summary)
-    st.markdown("---")
+        # Build a live reflection from box scores alone (no saved predictions needed)
+        reflection = {
+            "date":         date_str,
+            "status":       "live_computed",
+            "games_tracked": len(results),
+            "comparisons":  [],   # no predictions to compare against
+            "live_results": results,
+        }
 
-    # ── Profile insight ───────────────────────────────────────────────────────
-    insight = summary.get("profile_insight")
-    if insight:
-        st.info(f"💡 **Model Insight:** {insight}")
+    # ── Display ──────────────────────────────────────────────────────────────
+    live_results = reflection.get("live_results") or []
+    comparisons  = reflection.get("comparisons", [])
+    summary      = reflection.get("summary", {})
+    n            = reflection.get("games_tracked", 0)
 
-    # ── Overperformers / Underperformers ─────────────────────────────────────
-    col_over, col_under = st.columns(2)
-    with col_over:
-        _render_performer_table(
-            reflection.get("overperformers", []),
-            "🔥 Overperformers (beat projection)",
-            COLORS["over"],
-        )
-    with col_under:
-        _render_performer_table(
-            reflection.get("underperformers", []),
-            "❄️ Underperformers (missed projection)",
-            COLORS["under"],
-        )
+    st.markdown(f"#### ⚾ {display_date} — {n} starters")
 
-    st.markdown("---")
+    # If we have full comparison data (predictions existed)
+    if comparisons and summary:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("🎯 Accuracy",        f"{summary.get('accuracy_pct', 0)}%")
+        col2.metric("📊 Avg Predicted Ks", summary.get("avg_predicted_ks", "—"))
+        col3.metric("⚾ Avg Actual Ks",    summary.get("avg_actual_ks", "—"))
+        col4.metric("⚖️ Avg Δ Ks",         f"{summary.get('avg_k_delta', 0):+.2f}")
 
-    # ── Full comparison table ─────────────────────────────────────────────────
-    comparisons = reflection.get("comparisons", [])
-    if comparisons:
-        _render_full_comparison_table(comparisons)
+        insight = summary.get("profile_insight")
+        if insight:
+            st.info(f"💡 {insight}")
 
-    # ── 7-day rolling accuracy ────────────────────────────────────────────────
+        st.markdown("---")
+        col_o, col_u = st.columns(2)
+        with col_o:
+            st.markdown("#### 🔥 Overperformers")
+            for p in reflection.get("overperformers", []):
+                st.markdown(
+                    f"<div style='background:#d1fae5;border-left:4px solid #10b981;"
+                    f"border-radius:6px;padding:0.5rem 1rem;margin-bottom:0.4rem;'>"
+                    f"<strong>{p['pitcher_name']}</strong> ({p['team']})<br>"
+                    f"Predicted {p['predicted_ks']} → Actual <strong>{p['actual_ks']}</strong> "
+                    f"<span style='color:#10b981;font-weight:bold;'>+{p['k_delta']}</span></div>",
+                    unsafe_allow_html=True,
+                )
+        with col_u:
+            st.markdown("#### ❄️ Underperformers")
+            for p in reflection.get("underperformers", []):
+                st.markdown(
+                    f"<div style='background:#fee2e2;border-left:4px solid #ef4444;"
+                    f"border-radius:6px;padding:0.5rem 1rem;margin-bottom:0.4rem;'>"
+                    f"<strong>{p['pitcher_name']}</strong> ({p['team']})<br>"
+                    f"Predicted {p['predicted_ks']} → Actual <strong>{p['actual_ks']}</strong> "
+                    f"<span style='color:#ef4444;font-weight:bold;'>{p['k_delta']}</span></div>",
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("---")
+        st.markdown("#### 📋 Full Comparison")
+        rows = []
+        for c in sorted(comparisons, key=lambda x: x.get("actual_ks", 0), reverse=True):
+            acc = c.get("k_accuracy", "")
+            rows.append({
+                "Pitcher":      c["pitcher_name"],
+                "Team":         c.get("team", ""),
+                "SALCI":        c.get("predicted_salci", "—"),
+                "Predicted Ks": c.get("predicted_ks", "—"),
+                "Actual Ks":    c.get("actual_ks", "—"),
+                "IP":           c.get("actual_ip", "—"),
+                "Δ Ks":         f"{c.get('k_delta', 0):+.1f}",
+                "Result":       "✅ HIT" if acc == "HIT" else ("📈 OVER" if acc == "OVER" else "📉 UNDER"),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    else:
+        # No saved predictions — show actual box score results only
+        st.info("💡 No saved predictions for this date. Showing actual results only. SALCI comparison will appear once GitHub Actions has been running for a day.")
+
+        rows = []
+        for r in sorted(live_results, key=lambda x: x.get("actual_ks", 0), reverse=True):
+            rows.append({
+                "Pitcher":     r["pitcher_name"],
+                "Team":        r["team"],
+                "Opponent":    r.get("opponent", ""),
+                "Actual Ks":   r["actual_ks"],
+                "IP":          r["actual_ip"],
+                "Pitch Count": r.get("pitch_count", "—"),
+            })
+
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            # Quick summary stats from actuals
+            total_ks  = sum(r["actual_ks"]  for r in live_results)
+            total_ip  = sum(r["actual_ip"]  for r in live_results)
+            avg_ks    = total_ks / len(live_results)
+            top       = max(live_results, key=lambda x: x["actual_ks"])
+
+            st.markdown("---")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("⚾ Avg Ks / Starter", f"{avg_ks:.1f}")
+            c2.metric("🏆 K Leader",          f"{top['pitcher_name']} ({top['actual_ks']} Ks)")
+            c3.metric("📋 Starters Tracked",  len(live_results))
+
+    # ── Rolling accuracy (only if we have history) ───────────────────────────
     _render_rolling_accuracy()
-
-    # ── Footer ───────────────────────────────────────────────────────────────
-    generated_at = reflection.get("generated_at", "")
-    if generated_at:
-        try:
-            dt = datetime.fromisoformat(generated_at)
-            st.caption(f"Reflection generated at {dt.strftime('%I:%M %p ET on %B %-d, %Y')}")
-        except Exception:
-            st.caption(f"Reflection generated: {generated_at}")
