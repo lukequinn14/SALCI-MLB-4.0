@@ -24,6 +24,41 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+
+TEAM_LOGOS = {
+    "ARI": "https://www.mlbstatic.com/team-logos/109.svg",
+    "ATL": "https://www.mlbstatic.com/team-logos/144.svg",
+    "BAL": "https://www.mlbstatic.com/team-logos/110.svg",
+    "BOS": "https://www.mlbstatic.com/team-logos/111.svg",
+    "CHC": "https://www.mlbstatic.com/team-logos/112.svg",
+    "CWS": "https://www.mlbstatic.com/team-logos/145.svg",
+    "CIN": "https://www.mlbstatic.com/team-logos/113.svg",
+    "CLE": "https://www.mlbstatic.com/team-logos/114.svg",
+    "COL": "https://www.mlbstatic.com/team-logos/115.svg",
+    "DET": "https://www.mlbstatic.com/team-logos/116.svg",
+    "HOU": "https://www.mlbstatic.com/team-logos/117.svg",
+    "KC":  "https://www.mlbstatic.com/team-logos/118.svg",
+    "LAA": "https://www.mlbstatic.com/team-logos/108.svg",
+    "LAD": "https://www.mlbstatic.com/team-logos/119.svg",
+    "MIA": "https://www.mlbstatic.com/team-logos/146.svg",
+    "MIL": "https://www.mlbstatic.com/team-logos/158.svg",
+    "MIN": "https://www.mlbstatic.com/team-logos/142.svg",
+    "NYM": "https://www.mlbstatic.com/team-logos/121.svg",
+    "NYY": "https://www.mlbstatic.com/team-logos/147.svg",
+    "OAK": "https://www.mlbstatic.com/team-logos/133.svg",
+    "PHI": "https://www.mlbstatic.com/team-logos/143.svg",
+    "PIT": "https://www.mlbstatic.com/team-logos/134.svg",
+    "SD":  "https://www.mlbstatic.com/team-logos/135.svg",
+    "SF":  "https://www.mlbstatic.com/team-logos/137.svg",
+    "SEA": "https://www.mlbstatic.com/team-logos/136.svg",
+    "STL": "https://www.mlbstatic.com/team-logos/138.svg",
+    "TB":  "https://www.mlbstatic.com/team-logos/139.svg",
+    "TEX": "https://www.mlbstatic.com/team-logos/140.svg",
+    "TOR": "https://www.mlbstatic.com/team-logos/141.svg",
+    "WAS": "https://www.mlbstatic.com/team-logos/120.svg",
+}
+
+
 warnings.filterwarnings("ignore")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -380,107 +415,62 @@ def _league_era(season: int) -> float:
 
 def get_all_team_pitching(season: int = None) -> List[Dict]:
     """
-    Returns list of dicts (one per team, sorted by starter ERA) containing:
-      team, name,
-      era, fip, xfip, xera, whip, k9, bb9,          ← FanGraphs overall
-      starter_era, starter_fip, starter_whip, starter_k9,
-      bullpen_era,  bullpen_fip,  bullpen_whip,  bullpen_k9,
-      k_pct,                                          ← MLB API (SO/TBF)
-      era_plus,                                       ← calculated
-      source
+    Returns clean list of dicts with properly separated starter/bullpen stats.
     """
     if season is None:
-        season = SEASON
+        season = datetime.today().year
 
-    print(f"[team_pitching] Season {season} — fetching FanGraphs…")
-    fg = fetch_fangraphs_all(season)
-    print(f"  FanGraphs: {len(fg)} teams loaded")
+    print(f"[team_pitching] Fetching 202{str(season)[-2:]} data...")
 
-    lg_era = _league_era(season)
-    print(f"  League ERA (MLB API): {lg_era}")
-
-    results: List[Dict] = []
-
+    # 1. Get MLB API splits (most reliable for starter vs bullpen)
+    mlb_data = {}
     for team in MLB_TEAMS:
-        tid  = team["id"]
+        tid = team["id"]
         abbr = team["abbr"]
-        name = team["name"]
+        
+        # Starter split
+        sp = _mlb_split(tid, season, "startingPitchers")
+        # Bullpen split
+        bp = _mlb_split(tid, season, "reliefPitchers")
+        # Overall
+        overall = _mlb_overall(tid, season)
 
-        fg_t = fg.get(abbr, {})
+        mlb_data[abbr] = {
+            "name": team["name"],
+            "starter_era": sp.get("era") if sp else None,
+            "starter_fip": sp.get("fip") if sp else None,
+            "starter_whip": sp.get("whip") if sp else None,
+            "starter_k_pct": sp.get("k_pct") if sp else None,
+            "bullpen_era": bp.get("era") if bp else None,
+            "bullpen_fip": bp.get("fip") if bp else None,
+            "bullpen_whip": bp.get("whip") if bp else None,
+            "bullpen_k_pct": bp.get("k_pct") if bp else None,
+            "era": overall.get("era") if overall else None,
+            "fip": overall.get("fip") if overall else None,
+            "whip": overall.get("whip") if overall else None,
+            "k_pct": overall.get("k_pct") if overall else None,
+            "logo_url": TEAM_LOGOS.get(abbr),
+        }
 
-        # MLB API K% split (more reliable than estimating from K/9)
-        sp_split = _mlb_split(tid, season, "startingPitchers")
-        bp_split = _mlb_split(tid, season, "reliefPitchers")
-        mlb_all  = _mlb_overall(tid, season) if not fg_t else None
+    # 2. Try FanGraphs as enhancement (only if it has data)
+    fg = fetch_fangraphs_all(season)
+    for abbr, fg_stats in fg.items():
+        if abbr in mlb_data:
+            # Only override if FanGraphs has meaningful data
+            if fg_stats.get("starter_era"):
+                mlb_data[abbr]["starter_era"] = fg_stats.get("starter_era")
+            if fg_stats.get("bullpen_era"):
+                mlb_data[abbr]["bullpen_era"] = fg_stats.get("bullpen_era")
+            # Add xFIP / xERA if available
+            if fg_stats.get("xfip"):
+                mlb_data[abbr]["xfip"] = fg_stats.get("xfip")
 
-        # Prefer FanGraphs overall; MLB API as fallback
-        era  = fg_t.get("era")  or (mlb_all or {}).get("era")
-        whip = fg_t.get("whip") or (mlb_all or {}).get("whip")
-        fip  = fg_t.get("fip")  or (mlb_all or {}).get("fip")
-        xfip = fg_t.get("xfip")
-        xera = fg_t.get("xera")
-        k9   = fg_t.get("k9")
-        bb9  = fg_t.get("bb9")
+    # Convert to list and sort by starter ERA
+    results = list(mlb_data.values())
+    results = [r for r in results if r.get("starter_era") or r.get("era")]
+    results.sort(key=lambda x: x.get("starter_era") or x.get("era") or 99)
 
-        # K% — MLB API (SO/TBF) is more accurate than deriving from K/9
-        k_pct = (mlb_all or {}).get("k_pct") or (sp_split or {}).get("k_pct")
-
-        # ERA+ — park-adjusted needs FanGraphs membership; use raw approximation
-        era_plus = round(100 * lg_era / era, 0) if (era and era > 0) else None
-
-        # Starter / bullpen split — prefer FanGraphs if available
-        starter_era  = fg_t.get("starter_era")  or (sp_split or {}).get("era")
-        starter_fip  = fg_t.get("starter_fip")  or (sp_split or {}).get("fip")
-        starter_whip = fg_t.get("starter_whip") or (sp_split or {}).get("whip")
-        starter_k9   = fg_t.get("starter_k9")
-        starter_kpct = (sp_split or {}).get("k_pct")
-
-        bullpen_era  = fg_t.get("bullpen_era")  or (bp_split or {}).get("era")
-        bullpen_fip  = fg_t.get("bullpen_fip")  or (bp_split or {}).get("fip")
-        bullpen_whip = fg_t.get("bullpen_whip") or (bp_split or {}).get("whip")
-        bullpen_k9   = fg_t.get("bullpen_k9")
-        bullpen_kpct = (bp_split or {}).get("k_pct")
-
-        if not any([era, starter_era, bullpen_era]):
-            print(f"  {abbr}: no data — skipping")
-            continue
-
-        source = fg_t.get("source", "mlb_api")
-        if starter_era and fg_t.get("starter_era"):
-            source = "FanGraphs"
-        elif starter_era:
-            source = "FanGraphs + MLB API"
-
-        results.append({
-            "team": abbr,
-            "name": name,
-            # Overall (FanGraphs)
-            "era":   era,
-            "whip":  whip,
-            "fip":   fip,
-            "xfip":  xfip,
-            "xera":  xera,
-            "k9":    k9,
-            "bb9":   bb9,
-            "k_pct": k_pct,
-            "era_plus": era_plus,
-            # Starters
-            "starter_era":  starter_era,
-            "starter_fip":  starter_fip,
-            "starter_whip": starter_whip,
-            "starter_k9":   starter_k9,
-            "starter_k_pct": starter_kpct,
-            # Bullpen
-            "bullpen_era":  bullpen_era,
-            "bullpen_fip":  bullpen_fip,
-            "bullpen_whip": bullpen_whip,
-            "bullpen_k9":   bullpen_k9,
-            "bullpen_k_pct": bullpen_kpct,
-            "source": source,
-        })
-
-    results.sort(key=lambda x: (x.get("starter_era") or x.get("era") or 99))
-    print(f"  {len(results)} teams ready")
+    print(f"✅ Loaded pitching stats for {len(results)} teams")
     return results
 
 
