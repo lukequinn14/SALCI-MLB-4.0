@@ -2005,24 +2005,29 @@ def main():
         return
     
     st.success(f"Found **{len(games)} games** for {selected_date.strftime('%A, %B %d, %Y')}")
-    
+
+    games = get_games_by_date(selected_date)
     # Check lineup confirmation
     lineup_status = {}
     for game in games:
         game_pk = game["game_pk"]
+    
         home_lineup, home_confirmed = get_confirmed_lineup(game_pk, "home")
         away_lineup, away_confirmed = get_confirmed_lineup(game_pk, "away")
+    
         lineup_status[game_pk] = {
             "home": {"lineup": home_lineup, "confirmed": home_confirmed},
-            "away": {"lineup": away_lineup, "confirmed": away_confirmed}
+            "away": {"lineup": away_lineup, "confirmed": away_confirmed},
         }
-
+    
+    # ✅ RIGHT HERE — THIS IS YOUR INSERT POINT
     for game in games:
-    game_pk = game["game_pk"]
-    game["lineups_available"] = (
-        bool(lineup_status[game_pk]["home"]["lineup"]) or
-        bool(lineup_status[game_pk]["away"]["lineup"])
-    )
+        game_pk = game["game_pk"]
+        game["lineups_available"] = (
+            bool(lineup_status[game_pk]["home"]["lineup"]) or
+            bool(lineup_status[game_pk]["away"]["lineup"])
+        )
+
     
     confirmed_count = sum(1 for g in games 
                          if lineup_status[g["game_pk"]]["home"]["confirmed"] 
