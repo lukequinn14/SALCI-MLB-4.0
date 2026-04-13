@@ -106,6 +106,12 @@ try:
 except ImportError:
     pass  # Falls back to live compute
 
+try:
+    from pitching_dashboard_tab import render_pitching_dashboard
+    PITCHING_DASH_AVAILABLE = True
+except ImportError:
+    PITCHING_DASH_AVAILABLE = False
+
 # ----------------------------
 # Version Info
 # ----------------------------
@@ -1956,14 +1962,10 @@ def main():
     current_season = get_current_season(selected_date)
     
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "⚾ Pitcher Analysis", 
-        "🏏 Hitter Matchups", 
-        "🎯 Best Bets", 
-        "🔥 Heat Maps",
-        "📊 Charts & Share",
-        "📈 Yesterday",
-        "🎯 Model Accuracy"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "⚾ Pitcher Analysis", "🏏 Hitter Matchups", "🎯 Best Bets",
+        "🔥 Heat Maps", "📊 Charts & Share", "📈 Yesterday",
+        "🎯 Model Accuracy", "📡 Team Pitching"   # ← new
     ])
     
     # Fetch games
@@ -2768,6 +2770,10 @@ def main():
                 c1.metric("✅ Hit Rate",    f"{ra.get('accuracy_pct', 0):.1f}%", help="% within ±1.5 Ks of actual")
                 c2.metric("📊 Games Analyzed", ra.get("games_analyzed", 0))
                 c3.metric("⚖️ Avg K Delta",  f"{ra.get('avg_k_delta', 0):+.2f} Ks", delta_color="inverse")
+
+    with tab8:
+        if PITCHING_DASH_AVAILABLE:
+            render_pitching_dashboard()
 
 if __name__ == "__main__":
     main()
