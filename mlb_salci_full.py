@@ -1672,101 +1672,6 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
         st.progress(min(result["salci"] / 100, 1.0))
         st.markdown("---")
 
-# Build lookup for pitchers by game
-def get_pitchers_for_game(game_pk, all_pitchers):
-    home, away = None, None
-    
-    for p in all_pitchers:
-        if p["game_pk"] != game_pk:
-            continue
-        
-        if p["team"] == p.get("home_team"):
-            home = p
-        else:
-            away = p
-    
-    return home, awaydef get_pitchers_for_game(game_pk, all_pitchers):
-    home, away = None, None
-    
-    for p in all_pitchers:
-        if p["game_pk"] != game_pk:
-            continue
-        
-        if p["team"] == p.get("home_team"):
-            home = p
-        else:
-            away = p
-    
-    return home, away
-
-def render_matchup_card(game, home_pitcher, away_pitcher, lineup_status):
-    """Render head-to-head matchup card with SALCI + lineup intelligence."""
-
-    game_pk = game["game_pk"]
-
-    home_lineup = lineup_status[game_pk]["home"]["lineup"]
-    away_lineup = lineup_status[game_pk]["away"]["lineup"]
-
-    # Extract SALCI
-    home_salci = home_pitcher.get("salci", 0)
-    away_salci = away_pitcher.get("salci", 0)
-
-    # Determine edge
-    edge = home_salci - away_salci
-    if edge > 5:
-        edge_label = "Home Edge"
-        edge_color = "#22c55e"
-    elif edge < -5:
-        edge_label = "Away Edge"
-        edge_color = "#ef4444"
-    else:
-        edge_label = "Even Matchup"
-        edge_color = "#eab308"
-
-    # Count hot hitters
-    def count_hot_hitters(lineup):
-        return sum(1 for p in lineup if p.get("is_hot"))
-
-    home_hot = count_hot_hitters(home_lineup)
-    away_hot = count_hot_hitters(away_lineup)
-
-    with st.container():
-        st.markdown("### ⚔️ Matchup Breakdown")
-
-        col1, col2, col3 = st.columns([3, 1, 3])
-
-        # ── AWAY PITCHER ─────────────────────
-        with col1:
-            st.markdown(f"#### {away_pitcher['name']}")
-            st.metric("SALCI", f"{away_salci:.1f}")
-            st.write(f"🔥 Hot Hitters Faced: {home_hot}")
-            st.write(f"Lineup Size: {len(home_lineup)}")
-
-        # ── CENTER EDGE ─────────────────────
-        with col2:
-            st.markdown(
-                f"""
-                <div style='text-align:center; padding-top:30px;'>
-                    <h2 style='color:{edge_color};'>{edge_label}</h2>
-                    <p>Δ {edge:.1f}</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-        # ── HOME PITCHER ─────────────────────
-        with col3:
-            st.markdown(f"#### {home_pitcher['name']}")
-            st.metric("SALCI", f"{home_salci:.1f}")
-            st.write(f"🔥 Hot Hitters Faced: {away_hot}")
-            st.write(f"Lineup Size: {len(away_lineup)}")
-
-        # ── CONFIDENCE BAR ─────────────────────
-        confidence = min(abs(edge) * 5, 100)
-
-        st.progress(confidence / 100)
-
-        st.caption(f"Confidence: {confidence:.0f}% based on SALCI differential")
 
 def render_compact_summary(pitcher_results: List[Dict]):
     """
@@ -2498,27 +2403,6 @@ def main():
                                    unsafe_allow_html=True)
                     render_pitcher_card(result)
             gpk = game["game_pk"]
-
-            home_pitcher = game_pitchers.get(gpk, {}).get("home")
-            away_pitcher = game_pitchers.get(gpk, {}).get("away")
-            
-            if home_pitcher and away_pitcher:
-                render_matchup_card(
-                    game,
-                    home_pitcher,
-                    away_pitcher,
-                    lineup_status
-                )
-            st.markdown("""
-            <style>
-            .matchup-card {
-                background-color: #111827;
-                padding: 20px;
-                border-radius: 16px;
-                margin-bottom: 20px;
-            }
-            </style>
-            """, unsafe_allow_html=True)
             render_compact_summary(all_pitcher_results)
             
     
