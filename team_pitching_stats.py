@@ -1,30 +1,20 @@
 """
-SALCI Team Pitching Stats — Direct FanGraphs Scraper
+SALCI Team Pitching Stats Module — Clean & Reliable Version
 ======================================================
-Bypasses pybaseball entirely. pybaseball uses the old /leaders-legacy.aspx
-endpoint which FanGraphs has blocked. This module calls the live
-/leaders/major-league page directly and parses the HTML table.
-
-Three FanGraphs pages scraped (all confirmed working as of April 2026):
-  1. Overall team pitching  → ERA, FIP, xFIP, xERA, WHIP, K/9, BB/9
-  2. Starters by team       → Starter ERA, FIP, K/9  (stats=sta & team=0,ts)
-  3. Relievers by team      → Bullpen ERA, FIP, K/9  (stats=rel & team=0,ts)
-
-MLB Stats API provides K% (SO/TBF) as a cross-check and fallback.
-
-FanGraphs team abbreviation → MLB abbreviation map is applied before
-returning so all keys match the rest of your codebase.
+- Uses MLB Stats API as primary source (accurate Starter vs Bullpen split)
+- FanGraphs is optional enhancement only
+- Includes official team logos for easy graphing
+- Returns distinct starter_era and bullpen_era
 """
 
-import math
 import requests
-import warnings
-from datetime import datetime, date
+import math
+from datetime import datetime
 from typing import Dict, List, Optional
 
-import pandas as pd
-
-
+# ─────────────────────────────────────────────────────────────────────────────
+# OFFICIAL MLB TEAM LOGOS (SVG — perfect for Plotly, HTML, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
 TEAM_LOGOS = {
     "ARI": "https://www.mlbstatic.com/team-logos/109.svg",
     "ATL": "https://www.mlbstatic.com/team-logos/144.svg",
@@ -58,37 +48,9 @@ TEAM_LOGOS = {
     "WAS": "https://www.mlbstatic.com/team-logos/120.svg",
 }
 
-
-warnings.filterwarnings("ignore")
-
 # ─────────────────────────────────────────────────────────────────────────────
-# CONSTANTS
+# MLB TEAMS REFERENCE
 # ─────────────────────────────────────────────────────────────────────────────
-
-SEASON      = datetime.today().year
-FIP_CONST   = 3.10          # approximate; FanGraphs recalculates yearly
-FG_BASE     = "https://www.fangraphs.com/leaders/major-league"
-FG_HEADERS  = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
-# FanGraphs abbr → standard MLB abbr
-FG_TO_MLB: Dict[str, str] = {
-    "WSN": "WAS",
-    "CHW": "CWS",
-    "KCR": "KC",
-    "SDP": "SD",
-    "SFG": "SF",
-    "TBR": "TB",
-    "ATH": "OAK",   # Oakland relocated but FG uses ATH
-}
-
 MLB_TEAMS = [
     {"id": 109, "abbr": "ARI", "name": "Arizona Diamondbacks"},
     {"id": 144, "abbr": "ATL", "name": "Atlanta Braves"},
@@ -121,352 +83,138 @@ MLB_TEAMS = [
     {"id": 141, "abbr": "TOR", "name": "Toronto Blue Jays"},
     {"id": 120, "abbr": "WAS", "name": "Washington Nationals"},
 ]
-TEAM_NAME_MAP = {t["abbr"]: t["name"] for t in MLB_TEAMS}
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _safe(val, digits: int = 2) -> Optional[float]:
-    """Convert to float, round, return None for NaN/None/inf."""
-    try:
-        f = float(str(val).replace("%", "").replace(",", "").strip())
-        if math.isnan(f) or math.isinf(f):
-            return None
-        return round(f, digits)
-    except Exception:
-        return None
-
-
-def _pct(val) -> Optional[float]:
-    """Parse a percentage string like '22.4%' → 22.4, or 0.224 → 22.4."""
-    v = _safe(val)
-    if v is None:
-        return None
-    return round(v * 100, 1) if v < 2 else round(v, 1)
-
-
-def _to_abbr(fg_team: str) -> str:
-    t = str(fg_team).upper().strip()
-    return FG_TO_MLB.get(t, t)
-
-
-def _parse_ip(ip_str) -> float:
+def _parse_ip(ip_str: str) -> float:
+    """Convert '6.1' or '6.333' to proper innings pitched."""
     try:
         parts = str(ip_str).split(".")
         return int(parts[0]) + (int(parts[1]) / 3 if len(parts) > 1 else 0)
-    except Exception:
+    except:
         return 0.0
 
 
-def _fip(so, bb, hbp, hr, ip) -> Optional[float]:
-    if not ip or ip <= 0:
-        return None
-    return round((13 * hr + 3 * (bb + hbp) - 2 * so) / ip + FIP_CONST, 2)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FANGRAPHS SCRAPER  (direct HTML, no pybaseball)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _fg_url(stats: str, team: str, season: int,
-            start: str = "", end: str = "") -> str:
-    """
-    Build a FanGraphs team leaderboard URL.
-
-    stats : 'pit' = all pitchers, 'sta' = starters, 'rel' = relievers
-    team  : '0,ts' = team aggregate totals  |  '0,ss' = league split (avoid)
-    """
-    today = date.today().strftime("%Y-%m-%d")
-    sd = start or f"{season}-03-01"
-    ed = end   or today
-    return (
-        f"{FG_BASE}?pos=all&lg=all&qual=0&type=8"
-        f"&season={season}&season1={season}&ind=0"
-        f"&rost=0&age=0&players=0"
-        f"&stats={stats}&team={team}"
-        f"&month=1000&startdate={sd}&enddate={ed}"
-    )
-
-
-def _scrape_fg_table(url: str, label: str) -> Optional[pd.DataFrame]:
-    """
-    Fetch a FanGraphs leaderboard page and return the data table as DataFrame.
-    Tries pandas read_html first, falls back to manual column extraction.
-    """
-    try:
-        r = requests.get(url, headers=FG_HEADERS, timeout=25)
-        r.raise_for_status()
-    except Exception as e:
-        print(f"  FG fetch error [{label}]: {e}")
-        return None
-
-    html = r.text
-
-    # pandas read_html finds all <table> elements
-    try:
-        tables = pd.read_html(html)
-        # Pick the table most likely to be the stats table:
-        # it should have a "Team" or "Season" column AND ERA/FIP
-        for t in tables:
-            cols = [str(c).strip() for c in t.columns]
-            has_team   = any(c in ("Team", "Season") for c in cols)
-            has_stat   = any(c in ("ERA", "FIP", "xFIP") for c in cols)
-            enough_rows = len(t) >= 10   # at least 10 teams
-            if has_team and has_stat and enough_rows:
-                # Rename duplicate/unnamed columns
-                t.columns = [str(c).strip() for c in t.columns]
-                # Drop rows where Team is NaN or is a header repeat
-                if "Team" in t.columns:
-                    t = t[t["Team"].notna()]
-                    t = t[~t["Team"].astype(str).str.upper().isin(
-                        {"TEAM", "NAN", "", "SEASON"}
-                    )]
-                elif "Season" in t.columns:
-                    # starters page uses Season not Team
-                    pass
-                print(f"  FG [{label}]: {len(t)} rows, cols: {list(t.columns[:8])}")
-                return t.reset_index(drop=True)
-    except Exception as e:
-        print(f"  FG parse error [{label}]: {e}")
-
-    return None
-
-
-def _parse_fg_rows(df: pd.DataFrame, col_team: str) -> Dict[str, Dict]:
-    """Extract key stats from a FanGraphs DataFrame into {abbr: {...}} dict."""
-    result: Dict[str, Dict] = {}
-    cols = [str(c).strip() for c in df.columns]
-    df.columns = cols
-
-    for _, row in df.iterrows():
-        raw_team = str(row.get(col_team, "")).strip()
-        if not raw_team or raw_team.upper() in ("NAN", "", col_team.upper()):
-            continue
-        abbr = _to_abbr(raw_team)
-        if len(abbr) > 5:          # skip aggregate rows
-            continue
-
-        result[abbr] = {
-            "era":  _safe(row.get("ERA")),
-            "fip":  _safe(row.get("FIP")),
-            "xfip": _safe(row.get("xFIP")),
-            "xera": _safe(row.get("xERA")),
-            "whip": _safe(row.get("WHIP")),
-            "k9":   _safe(row.get("K/9"), 1),
-            "bb9":  _safe(row.get("BB/9"), 1),
-            "babip": _safe(row.get("BABIP")),
-            "lob_pct": _pct(row.get("LOB%")),
-            "hr_fb":   _pct(row.get("HR/FB")),
-        }
-    return result
-
-
-def fetch_fangraphs_all(season: int) -> Dict[str, Dict]:
-    """
-    Scrape three FanGraphs pages:
-      - overall team pitching (ERA, FIP, xFIP)
-      - starters  (starter ERA, FIP)
-      - relievers (bullpen ERA, FIP)
-
-    Returns merged dict keyed by team abbreviation.
-    """
-    today = date.today().strftime("%Y-%m-%d")
-    start = f"{season}-03-01"
-
-    # ── 1. Overall ──────────────────────────────────────────────────────────
-    url_overall = _fg_url("pit", "0%2Cts", season, start, today)
-    df_overall  = _scrape_fg_table(url_overall, "overall")
-
-    # ── 2. Starters ─────────────────────────────────────────────────────────
-    url_sta = _fg_url("sta", "0%2Cts", season, start, today)
-    df_sta  = _scrape_fg_table(url_sta, "starters")
-
-    # ── 3. Relievers ────────────────────────────────────────────────────────
-    url_rel = _fg_url("rel", "0%2Cts", season, start, today)
-    df_rel  = _scrape_fg_table(url_rel, "relievers")
-
-    merged: Dict[str, Dict] = {}
-
-    # Overall
-    if df_overall is not None:
-        col = "Team" if "Team" in df_overall.columns else df_overall.columns[0]
-        for abbr, stats in _parse_fg_rows(df_overall, col).items():
-            merged[abbr] = {**stats, "source": "fangraphs"}
-
-    # Starters overlay
-    if df_sta is not None:
-        col = "Team" if "Team" in df_sta.columns else df_sta.columns[0]
-        for abbr, stats in _parse_fg_rows(df_sta, col).items():
-            if abbr not in merged:
-                merged[abbr] = {"source": "fangraphs"}
-            merged[abbr]["starter_era"]  = stats.get("era")
-            merged[abbr]["starter_fip"]  = stats.get("fip")
-            merged[abbr]["starter_xfip"] = stats.get("xfip")
-            merged[abbr]["starter_k9"]   = stats.get("k9")
-            merged[abbr]["starter_whip"] = stats.get("whip")
-
-    # Relievers overlay
-    if df_rel is not None:
-        col = "Team" if "Team" in df_rel.columns else df_rel.columns[0]
-        for abbr, stats in _parse_fg_rows(df_rel, col).items():
-            if abbr not in merged:
-                merged[abbr] = {"source": "fangraphs"}
-            merged[abbr]["bullpen_era"]  = stats.get("era")
-            merged[abbr]["bullpen_fip"]  = stats.get("fip")
-            merged[abbr]["bullpen_xfip"] = stats.get("xfip")
-            merged[abbr]["bullpen_k9"]   = stats.get("k9")
-            merged[abbr]["bullpen_whip"] = stats.get("whip")
-
-    return merged
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MLB STATS API  (K%, ERA split cross-check, fallback)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _mlb_split(team_id: int, season: int, sit_code: str) -> Optional[Dict]:
-    url = (
-        f"https://statsapi.mlb.com/api/v1/teams/{team_id}/stats"
-        f"?stats=season&season={season}&group=pitching&sitCodes={sit_code}"
-    )
+    """Starter or bullpen split from MLB Stats API."""
+    url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/stats?stats=season&season={season}&group=pitching&sitCodes={sit_code}"
     try:
         r = requests.get(url, timeout=12)
         r.raise_for_status()
         splits = r.json().get("stats", [{}])[0].get("splits", [])
         if not splits:
             return None
-        s   = splits[0]["stat"]
-        ip  = _parse_ip(s.get("inningsPitched", "0.0"))
+        s = splits[0]["stat"]
+        ip = _parse_ip(s.get("inningsPitched", "0.0"))
         if ip < 1:
             return None
-        so  = int(s.get("strikeOuts",  0))
-        bb  = int(s.get("baseOnBalls", 0))
-        hbp = int(s.get("hitBatsmen",  0))
-        hr  = int(s.get("homeRuns",    0))
-        er  = int(s.get("earnedRuns",  0))
-        h   = int(s.get("hits",        0))
-        tbf = int(s.get("battersFaced",1))
-        era  = _safe(s.get("era")) or (round(er/ip*9,2) if ip>0 else None)
-        whip = _safe(s.get("whip")) or (round((bb+h)/ip,2) if ip>0 else None)
-        k_pct = round(so/tbf*100,1) if tbf > 0 else None
+
+        so = int(s.get("strikeOuts", 0))
+        bb = int(s.get("baseOnBalls", 0))
+        hbp = int(s.get("hitBatsmen", 0))
+        hr = int(s.get("homeRuns", 0))
+        er = int(s.get("earnedRuns", 0))
+        h = int(s.get("hits", 0))
+        tbf = int(s.get("battersFaced", 1))
+
+        era = round(er / ip * 9, 2) if ip > 0 else None
+        whip = round((bb + h) / ip, 2) if ip > 0 else None
+        k_pct = round(so / tbf * 100, 1) if tbf > 0 else None
+
         return {
-            "era": era, "whip": whip,
-            "k_pct": k_pct, "fip": _fip(so,bb,hbp,hr,ip),
-            "ip": round(ip,1),
+            "era": era,
+            "whip": whip,
+            "k_pct": k_pct,
+            "ip": round(ip, 1),
         }
     except Exception:
         return None
 
 
 def _mlb_overall(team_id: int, season: int) -> Optional[Dict]:
-    url = (
-        f"https://statsapi.mlb.com/api/v1/teams/{team_id}/stats"
-        f"?stats=season&season={season}&group=pitching"
-    )
+    """Overall team pitching stats."""
+    url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/stats?stats=season&season={season}&group=pitching"
     try:
         r = requests.get(url, timeout=12)
         r.raise_for_status()
-        splits = r.json().get("stats",[{}])[0].get("splits",[])
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
         if not splits:
             return None
-        s   = splits[0]["stat"]
-        ip  = _parse_ip(s.get("inningsPitched","0.0"))
+        s = splits[0]["stat"]
+        ip = _parse_ip(s.get("inningsPitched", "0.0"))
         if ip < 1:
             return None
-        so  = int(s.get("strikeOuts",  0))
-        bb  = int(s.get("baseOnBalls", 0))
-        hbp = int(s.get("hitBatsmen",  0))
-        hr  = int(s.get("homeRuns",    0))
-        er  = int(s.get("earnedRuns",  0))
-        h   = int(s.get("hits",        0))
-        tbf = int(s.get("battersFaced",1))
-        era  = _safe(s.get("era")) or round(er/ip*9,2)
-        whip = _safe(s.get("whip")) or round((bb+h)/ip,2)
-        k_pct = round(so/tbf*100,1) if tbf>0 else None
+
+        so = int(s.get("strikeOuts", 0))
+        bb = int(s.get("baseOnBalls", 0))
+        hbp = int(s.get("hitBatsmen", 0))
+        hr = int(s.get("homeRuns", 0))
+        er = int(s.get("earnedRuns", 0))
+        h = int(s.get("hits", 0))
+        tbf = int(s.get("battersFaced", 1))
+
+        era = round(er / ip * 9, 2) if ip > 0 else None
+        whip = round((bb + h) / ip, 2) if ip > 0 else None
+        k_pct = round(so / tbf * 100, 1) if tbf > 0 else None
+
         return {
-            "era": era, "whip": whip, "k_pct": k_pct,
-            "fip": _fip(so,bb,hbp,hr,ip), "source": "mlb_api",
+            "era": era,
+            "whip": whip,
+            "k_pct": k_pct,
+            "ip": round(ip, 1),
         }
-    except Exception as e:
-        print(f"  MLB API error team {team_id}: {e}")
+    except Exception:
         return None
 
 
-def _league_era(season: int) -> float:
-    url = (
-        f"https://statsapi.mlb.com/api/v1/stats?stats=season&season={season}"
-        f"&group=pitching&gameType=R&sportId=1&limit=1&playerPool=ALL"
-    )
-    try:
-        r = requests.get(url, timeout=10)
-        sp = r.json().get("stats",[{}])[0].get("splits",[])
-        if sp:
-            return float(sp[0]["stat"].get("era", 4.20))
-    except Exception:
-        pass
-    return 4.20
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN
+# MAIN FUNCTION
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_all_team_pitching(season: int = None) -> List[Dict]:
     """
-    Returns clean list of dicts with properly separated starter/bullpen stats.
+    Returns list of dicts with properly separated starter and bullpen stats.
+    Primary source: MLB Stats API (most reliable early in season).
     """
     if season is None:
         season = datetime.today().year
 
-    print(f"[team_pitching] Fetching 202{str(season)[-2:]} data...")
+    print(f"[team_pitching] Fetching {season} data...")
 
-    # 1. Get MLB API splits (most reliable for starter vs bullpen)
-    mlb_data = {}
+    results = []
+
     for team in MLB_TEAMS:
         tid = team["id"]
         abbr = team["abbr"]
-        
-        # Starter split
+
         sp = _mlb_split(tid, season, "startingPitchers")
-        # Bullpen split
         bp = _mlb_split(tid, season, "reliefPitchers")
-        # Overall
         overall = _mlb_overall(tid, season)
 
-        mlb_data[abbr] = {
+        data = {
+            "team": abbr,
             "name": team["name"],
-            "starter_era": sp.get("era") if sp else None,
-            "starter_fip": sp.get("fip") if sp else None,
-            "starter_whip": sp.get("whip") if sp else None,
-            "starter_k_pct": sp.get("k_pct") if sp else None,
-            "bullpen_era": bp.get("era") if bp else None,
-            "bullpen_fip": bp.get("fip") if bp else None,
-            "bullpen_whip": bp.get("whip") if bp else None,
-            "bullpen_k_pct": bp.get("k_pct") if bp else None,
+            "logo_url": TEAM_LOGOS.get(abbr),
+            # Overall team stats
             "era": overall.get("era") if overall else None,
-            "fip": overall.get("fip") if overall else None,
             "whip": overall.get("whip") if overall else None,
             "k_pct": overall.get("k_pct") if overall else None,
-            "logo_url": TEAM_LOGOS.get(abbr),
+            # Starters
+            "starter_era": sp.get("era") if sp else None,
+            "starter_whip": sp.get("whip") if sp else None,
+            "starter_k_pct": sp.get("k_pct") if sp else None,
+            # Bullpen
+            "bullpen_era": bp.get("era") if bp else None,
+            "bullpen_whip": bp.get("whip") if bp else None,
+            "bullpen_k_pct": bp.get("k_pct") if bp else None,
+            "source": "MLB Stats API",
         }
 
-    # 2. Try FanGraphs as enhancement (only if it has data)
-    fg = fetch_fangraphs_all(season)
-    for abbr, fg_stats in fg.items():
-        if abbr in mlb_data:
-            # Only override if FanGraphs has meaningful data
-            if fg_stats.get("starter_era"):
-                mlb_data[abbr]["starter_era"] = fg_stats.get("starter_era")
-            if fg_stats.get("bullpen_era"):
-                mlb_data[abbr]["bullpen_era"] = fg_stats.get("bullpen_era")
-            # Add xFIP / xERA if available
-            if fg_stats.get("xfip"):
-                mlb_data[abbr]["xfip"] = fg_stats.get("xfip")
+        results.append(data)
 
-    # Convert to list and sort by starter ERA
-    results = list(mlb_data.values())
+    # Filter and sort by starter ERA (best to worst)
     results = [r for r in results if r.get("starter_era") or r.get("era")]
     results.sort(key=lambda x: x.get("starter_era") or x.get("era") or 99)
 
@@ -474,20 +222,19 @@ def get_all_team_pitching(season: int = None) -> List[Dict]:
     return results
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick test when running the file directly
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     data = get_all_team_pitching()
-    if not data:
-        print("No data returned!")
-    else:
-        print(f"\n{'Team':<5} {'SP ERA':<9} {'BP ERA':<9} {'ERA':<7} {'FIP':<7} {'xFIP':<7} {'Source'}")
-        print("─" * 65)
-        for t in data:
-            print(
-                f"{t['team']:<5}"
-                f"{str(t.get('starter_era') or '—'):<9}"
-                f"{str(t.get('bullpen_era')  or '—'):<9}"
-                f"{str(t.get('era')          or '—'):<7}"
-                f"{str(t.get('fip')          or '—'):<7}"
-                f"{str(t.get('xfip')         or '—'):<7}"
-                f"{t.get('source','?')}"
-            )
+    
+    print(f"\n{'Team':<5} {'Starter ERA':<12} {'Bullpen ERA':<12} {'Overall ERA':<12} {'K%':<8}")
+    print("─" * 70)
+    for t in data:
+        print(
+            f"{t['team']:<5} "
+            f"{str(t.get('starter_era') or '—'):<12} "
+            f"{str(t.get('bullpen_era') or '—'):<12} "
+            f"{str(t.get('era') or '—'):<12} "
+            f"{str(t.get('k_pct') or '—'):<8}"
+        )
