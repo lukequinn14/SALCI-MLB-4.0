@@ -79,11 +79,12 @@ except ImportError as e:
     SALCI_V3_AVAILABLE = False
 
 try:
-    import reflection as refl
-    REFLECTION_AVAILABLE = True
-except ImportError as e:
-    st.warning(f"⚠️ Reflection module not available: {e}")
-    REFLECTION_AVAILABLE = False
+    from yesterday_tab import render_yesterday_tab
+    YESTERDAY_TAB_AVAILABLE = True
+except ImportError:
+    YESTERDAY_TAB_AVAILABLE = False
+
+
 
 # ---------------------------------------------------------------------------
 # Hit Likelihood Integration
@@ -2724,6 +2725,9 @@ def main():
         
         st.markdown(f"**Analyzing:** {yesterday_display}")
         st.markdown("---")
+
+        if YESTERDAY_TAB_AVAILABLE:
+            render_yesterday_tab()
         
         if not REFLECTION_AVAILABLE:
             st.warning("⚠️ Reflection module not available. Place `reflection.py` alongside this file and restart.")
