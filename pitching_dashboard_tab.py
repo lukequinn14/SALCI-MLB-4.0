@@ -1,5 +1,5 @@
 """
-SALCI Pitching Dashboard Tab  ·  v2.0
+SALCI Pitching Dashboard Tab  ·  v2.1
 ======================================
 Drop-in replacement for the pitching tab.
 
@@ -14,18 +14,28 @@ Usage in mlb_salci_full.py:
         if PITCHING_DASH_AVAILABLE:
             render_pitching_dashboard()
 
+Changes in v2.1 (this version)
+--------------------------------
+- Logos: switched from mlbstatic SVGs to ESPN CDN PNGs (more reliable)
+  Uses get_team_logo_url() from team_pitching_stats — or local fallback map
+- Data source banner: FanGraphs → "MLB API + Baseball Savant"
+- Source badge: "FG" label renamed to "Savant" to match new backend
+- xFIP/whiff/hard-hit now fed from Baseball Savant leaderboard CSV
+- FIP is now self-computed (13·HR + 3·(BB+HBP) − 2·K) / IP + 3.10
+  so it always shows even when Savant is down
+- SP/BP split explanation updated with correct API endpoint info
+
 Changes in v2.0
 ---------------
 - Radio selector → st.tabs (persistent, navigable)
 - Team logos in header summary strip + full data table
-- FanGraphs connection status is a prominent banner, not a footnote
+- Prominent data-source banner at the top
 - Every chart: improved titles, axis labels, hover templates
 - Quadrant labels on K% vs ERA+ scatter
 - FIP–ERA gap: callout cards for regression candidates
 - Dark-mode friendly: transparent plot backgrounds, subdued grids
 - Key Insights section at the top (expandable)
 - Data table: logo column rendered via HTML, colour-coded Source column
-- All st.metric calls augmented with delta context where meaningful
 """
 
 import streamlit as st
@@ -46,39 +56,28 @@ SLATE  = "rgba(148,163,184,0.15)"   # subtle grid lines
 TEXT   = "#e2e8f0"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEAM LOGOS  (official MLB SVGs — scale perfectly at any size)
+# TEAM LOGOS  (ESPN CDN — reliable PNG, 500px, no auth required)
+# Matches the same helper used in team_pitching_stats.py.
+# team_pitching_stats.get_team_logo_url() is the canonical source;
+# this local map is a fast zero-import fallback.
 # ─────────────────────────────────────────────────────────────────────────────
+_ESPN_BASE = "https://a.espncdn.com/i/teamlogos/mlb/500"
 TEAM_LOGOS: Dict[str, str] = {
-    "ARI": "https://www.mlbstatic.com/team-logos/109.svg",
-    "ATL": "https://www.mlbstatic.com/team-logos/144.svg",
-    "BAL": "https://www.mlbstatic.com/team-logos/110.svg",
-    "BOS": "https://www.mlbstatic.com/team-logos/111.svg",
-    "CHC": "https://www.mlbstatic.com/team-logos/112.svg",
-    "CWS": "https://www.mlbstatic.com/team-logos/113.svg",
-    "CIN": "https://www.mlbstatic.com/team-logos/114.svg",
-    "CLE": "https://www.mlbstatic.com/team-logos/115.svg",
-    "COL": "https://www.mlbstatic.com/team-logos/116.svg",
-    "DET": "https://www.mlbstatic.com/team-logos/117.svg",
-    "HOU": "https://www.mlbstatic.com/team-logos/118.svg",
-    "KC":  "https://www.mlbstatic.com/team-logos/119.svg",
-    "LAA": "https://www.mlbstatic.com/team-logos/120.svg",
-    "LAD": "https://www.mlbstatic.com/team-logos/121.svg",
-    "MIA": "https://www.mlbstatic.com/team-logos/122.svg",
-    "MIL": "https://www.mlbstatic.com/team-logos/123.svg",
-    "MIN": "https://www.mlbstatic.com/team-logos/124.svg",
-    "NYM": "https://www.mlbstatic.com/team-logos/125.svg",
-    "NYY": "https://www.mlbstatic.com/team-logos/126.svg",
-    "OAK": "https://www.mlbstatic.com/team-logos/127.svg",
-    "PHI": "https://www.mlbstatic.com/team-logos/128.svg",
-    "PIT": "https://www.mlbstatic.com/team-logos/129.svg",
-    "SD":  "https://www.mlbstatic.com/team-logos/130.svg",
-    "SF":  "https://www.mlbstatic.com/team-logos/131.svg",
-    "SEA": "https://www.mlbstatic.com/team-logos/132.svg",
-    "STL": "https://www.mlbstatic.com/team-logos/133.svg",
-    "TB":  "https://www.mlbstatic.com/team-logos/134.svg",
-    "TEX": "https://www.mlbstatic.com/team-logos/135.svg",
-    "TOR": "https://www.mlbstatic.com/team-logos/136.svg",
-    "WSH": "https://www.mlbstatic.com/team-logos/137.svg",
+    "ARI": f"{_ESPN_BASE}/ari.png", "ATL": f"{_ESPN_BASE}/atl.png",
+    "BAL": f"{_ESPN_BASE}/bal.png", "BOS": f"{_ESPN_BASE}/bos.png",
+    "CHC": f"{_ESPN_BASE}/chc.png", "CWS": f"{_ESPN_BASE}/cws.png",
+    "CIN": f"{_ESPN_BASE}/cin.png", "CLE": f"{_ESPN_BASE}/cle.png",
+    "COL": f"{_ESPN_BASE}/col.png", "DET": f"{_ESPN_BASE}/det.png",
+    "HOU": f"{_ESPN_BASE}/hou.png", "KC":  f"{_ESPN_BASE}/kc.png",
+    "LAA": f"{_ESPN_BASE}/laa.png", "LAD": f"{_ESPN_BASE}/lad.png",
+    "MIA": f"{_ESPN_BASE}/mia.png", "MIL": f"{_ESPN_BASE}/mil.png",
+    "MIN": f"{_ESPN_BASE}/min.png", "NYM": f"{_ESPN_BASE}/nym.png",
+    "NYY": f"{_ESPN_BASE}/nyy.png", "OAK": f"{_ESPN_BASE}/oak.png",
+    "PHI": f"{_ESPN_BASE}/phi.png", "PIT": f"{_ESPN_BASE}/pit.png",
+    "SD":  f"{_ESPN_BASE}/sd.png",  "SF":  f"{_ESPN_BASE}/sf.png",
+    "SEA": f"{_ESPN_BASE}/sea.png", "STL": f"{_ESPN_BASE}/stl.png",
+    "TB":  f"{_ESPN_BASE}/tb.png",  "TEX": f"{_ESPN_BASE}/tex.png",
+    "TOR": f"{_ESPN_BASE}/tor.png", "WSH": f"{_ESPN_BASE}/wsh.png",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -245,7 +244,7 @@ def _load(season: int) -> List[Dict]:
 
 
 def _load_data(season: int) -> List[Dict]:
-    with st.spinner("🔄  Fetching live pitching data — FanGraphs + MLB API…"):
+    with st.spinner("🔄  Fetching live pitching data — MLB API + Baseball Savant…"):
         return _load(season)
 
 
@@ -273,8 +272,8 @@ def _fmt(val, key: str) -> str:
         return "—"
     if "pct" in key:
         return f"{val:.1f}%"
-    if key == "era_plus":
-        return str(int(round(val)))
+    if key in ("era_plus", "era+"):
+        return str(int(round(val)))  # kept for future ERA+ support
     return f"{val:.2f}"
 
 
@@ -389,20 +388,26 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
+    """
+    K% vs ERA scatter (ERA used as y-axis since ERA+ is no longer sourced).
+    Lower ERA = better, so we invert the y-axis for intuitive reading.
+    Falls back to whiff% on y-axis if ERA unavailable.
+    """
+    # Prefer K% vs ERA (always available from MLB API)
     rows = [d for d in data
-            if d.get("k_pct") is not None and d.get("era_plus") is not None]
+            if d.get("k_pct") is not None and d.get("era") is not None]
     if len(rows) < 2:
         return None
 
-    avg_k  = sum(d["k_pct"]   for d in rows) / len(rows)
-    avg_ep = sum(d["era_plus"] for d in rows) / len(rows)
+    avg_k  = sum(d["k_pct"] for d in rows) / len(rows)
+    avg_er = sum(d["era"]   for d in rows) / len(rows)
 
     def _color(d: Dict) -> str:
-        above_k  = d["k_pct"]   >= avg_k
-        above_ep = d["era_plus"] >= avg_ep
-        if above_k and above_ep:
-            return TEAL      # elite
-        if not above_k and not above_ep:
+        high_k    = d["k_pct"] >= avg_k
+        low_era   = d["era"]   <= avg_er   # lower ERA = better
+        if high_k and low_era:
+            return TEAL      # elite: lots of Ks, low ERA
+        if not high_k and not low_era:
             return CORAL     # struggling
         return BLUE          # mixed
 
@@ -410,38 +415,36 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
 
     fig = go.Figure()
 
-    # Quadrant reference lines
     fig.add_vline(x=avg_k,  line_dash="dot",
                   line_color="rgba(148,163,184,0.30)", line_width=1)
-    fig.add_hline(y=avg_ep, line_dash="dot",
+    fig.add_hline(y=avg_er, line_dash="dot",
                   line_color="rgba(148,163,184,0.30)", line_width=1)
 
-    # Quadrant labels (annotations)
-    k_vals  = [d["k_pct"]   for d in rows]
-    ep_vals = [d["era_plus"] for d in rows]
+    k_vals  = [d["k_pct"] for d in rows]
+    er_vals = [d["era"]   for d in rows]
     pad_k   = (max(k_vals) - min(k_vals)) * 0.08
-    pad_ep  = (max(ep_vals) - min(ep_vals)) * 0.08
+    pad_er  = (max(er_vals) - min(er_vals)) * 0.10
 
     label_cfg = dict(font_size=9, showarrow=False,
                      font_color="rgba(148,163,184,0.55)")
-    fig.add_annotation(x=max(k_vals),  y=max(ep_vals),
-                        text="⭐ Elite sustainable",
-                        xanchor="right", yanchor="top", **label_cfg)
-    fig.add_annotation(x=min(k_vals),  y=max(ep_vals),
-                        text="Lucky / BABIP driven",
-                        xanchor="left",  yanchor="top", **label_cfg)
-    fig.add_annotation(x=max(k_vals),  y=min(ep_vals),
-                        text="High K%, poor results",
+    fig.add_annotation(x=max(k_vals), y=min(er_vals),
+                        text="⭐ Elite (high K, low ERA)",
                         xanchor="right", yanchor="bottom", **label_cfg)
-    fig.add_annotation(x=min(k_vals),  y=min(ep_vals),
+    fig.add_annotation(x=min(k_vals), y=min(er_vals),
+                        text="Lucky / contact suppression",
+                        xanchor="left", yanchor="bottom", **label_cfg)
+    fig.add_annotation(x=max(k_vals), y=max(er_vals),
+                        text="Strikeouts but giving up runs",
+                        xanchor="right", yanchor="top", **label_cfg)
+    fig.add_annotation(x=min(k_vals), y=max(er_vals),
                         text="⚠️ Struggling",
-                        xanchor="left",  yanchor="bottom", **label_cfg)
+                        xanchor="left", yanchor="top", **label_cfg)
 
     fig.add_trace(go.Scatter(
-        x=[d["k_pct"]    for d in rows],
-        y=[d["era_plus"] for d in rows],
+        x=k_vals,
+        y=er_vals,
         mode="markers+text",
-        text=[d["team"]  for d in rows],
+        text=[d["team"] for d in rows],
         textposition="top center",
         textfont=dict(size=10, color=TEXT),
         marker=dict(color=colors, size=11,
@@ -449,21 +452,21 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
         hovertemplate=(
             "<b>%{text}</b><br>"
             "K%%: <b>%{x:.1f}%%</b><br>"
-            "ERA+: <b>%{y:.0f}</b>"
+            "ERA: <b>%{y:.2f}</b>"
             "<extra></extra>"
         ),
     ))
 
     fig.update_layout(
         height=490,
-        title=dict(text="K% vs ERA+ — Sustainability Quadrant",
+        title=dict(text="K% vs ERA — Dominance Quadrant",
                    font=dict(size=15, color=TEXT), x=0),
-        xaxis=dict(title="Team K%  (FanGraphs)",
+        xaxis=dict(title="Team K%  (MLB API / Savant)",
                    tickformat=".1f", ticksuffix="%",
                    range=[min(k_vals) - pad_k, max(k_vals) + pad_k],
                    gridcolor=SLATE, zeroline=False),
-        yaxis=dict(title="ERA+  (park-adjusted, FanGraphs)",
-                   range=[min(ep_vals) - pad_ep, max(ep_vals) + pad_ep],
+        yaxis=dict(title="Team ERA  (lower = better)",
+                   range=[max(er_vals) + pad_er, min(er_vals) - pad_er],  # inverted
                    gridcolor=SLATE, zeroline=False),
         **_base_layout(),
     )
@@ -567,7 +570,7 @@ def _render_header(season: int) -> None:
             <span style="font-size:2.2rem">⚾</span>
             <div>
                 <h2>SALCI Pitching Dashboard</h2>
-                <p>{season} Season · FanGraphs advanced metrics merged with MLB Stats API splits</p>
+                <p>{season} Season · MLB Stats API splits · FIP self-computed · xFIP/Whiff% from Baseball Savant</p>
             </div>
         </div>
         """,
@@ -575,29 +578,38 @@ def _render_header(season: int) -> None:
     )
 
 
-def _render_fg_banner(fg_count: int) -> None:
+def _render_fg_banner(savant_count: int) -> None:
+    """
+    Render the data-source status banner.
+    savant_count = number of teams that have Baseball Savant overlay data.
+    FIP and K% are always shown (self-computed from MLB API),
+    so even 0 Savant teams is a degraded-but-functional state.
+    """
+    fg_count = savant_count   # kept as parameter name for callers
     if fg_count >= 20:
         cls, icon, msg = (
             "ok", "✅",
-            f"<strong>FanGraphs connected</strong> — "
-            f"{fg_count}/30 teams with advanced metrics "
-            f"(ERA+, FIP, xFIP, SIERA, K%)"
-            f"<br><span class='label'>Park-adjusted, run-environment neutral stats "
-            f"via pybaseball · refreshes hourly</span>",
+            f"<strong>MLB API + Baseball Savant</strong> — "
+            f"{fg_count}/30 teams with full advanced metrics "
+            f"(FIP self-computed · xFIP, whiff%, hard-hit% from Savant)"
+            f"<br><span class='label'>Starter/Bullpen split: MLB Stats API "
+            f"sitCodes · Savant leaderboard CSV · refreshes hourly</span>",
         )
     elif fg_count > 0:
         cls, icon, msg = (
             "warn", "⚠️",
-            f"<strong>FanGraphs partial</strong> — "
-            f"{fg_count}/30 teams · some advanced stats missing"
-            f"<br><span class='label'>Check pybaseball install or FanGraphs availability</span>",
+            f"<strong>Savant partial</strong> — "
+            f"{fg_count}/30 teams · FIP & K% available for all (self-computed)"
+            f"<br><span class='label'>xFIP / whiff% / hard-hit% limited · "
+            f"check Baseball Savant availability</span>",
         )
     else:
         cls, icon, msg = (
             "warn", "🔌",
-            "<strong>FanGraphs offline</strong> — "
-            "showing MLB Stats API data only (ERA, WHIP, Starter/Bullpen split)"
-            "<br><span class='label'>Install pybaseball and ensure network access to fangraphs.com</span>",
+            "<strong>Savant offline</strong> — "
+            "MLB API data only (ERA, WHIP, Starter/Bullpen split, FIP, K%)"
+            "<br><span class='label'>Self-computed FIP and K% are still shown · "
+            "xFIP / whiff% / hard-hit% unavailable until Savant responds</span>",
         )
     st.markdown(
         f'<div class="fg-banner {cls}">'
@@ -646,7 +658,7 @@ def _render_key_insights(data: List[Dict]) -> None:
                 '<div class="insight-box green">'
                 "<strong>What is ERA+?</strong><br>"
                 "Park-adjusted ERA relative to league average (100 = league avg, "
-                "120 = 20% better than average). Sourced from FanGraphs."
+                "120 = 20% better than average). When ERA+ unavailable, K% vs ERA is used."
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -680,7 +692,7 @@ def _render_key_insights(data: List[Dict]) -> None:
         st.markdown(
             "<br><small style='color:#475569'>"
             "Sources · ERA / WHIP / SP split / BP split: MLB Stats API (official). "
-            "FIP / xFIP / SIERA / K% / ERA+: FanGraphs via pybaseball. "
+            "FIP (self-computed) · xFIP / whiff% / hard-hit%: Baseball Savant leaderboard CSV. "
             "Data refreshes every 60 minutes."
             "</small>",
             unsafe_allow_html=True,
@@ -702,10 +714,8 @@ def _render_data_table(data: List[Dict]) -> None:
             era      = d.get("era")
             fip      = d.get("fip")
             xfip     = d.get("xfip")
-            siera    = d.get("siera")
             whip     = d.get("whip")
             k_pct    = d.get("k_pct")
-            era_plus = d.get("era_plus")
             source   = d.get("source", "—")
 
             def _td(val, key, invert=False):
@@ -716,13 +726,11 @@ def _render_data_table(data: List[Dict]) -> None:
                 if key in ("era", "fip", "xfip") and val is not None:
                     cls = "good" if val < 3.80 else ("bad" if val > 4.80 else "")
                     return f'<td class="{cls}">{fmt}</td>'
-                if key == "era_plus" and val is not None:
-                    cls = "good" if val > 110 else ("bad" if val < 90 else "")
-                    return f'<td class="{cls}">{fmt}</td>'
+                # era_plus colouring kept for future use
                 return f"<td>{fmt}</td>"
 
-            if "FanGraphs" in source:
-                badge = '<span class="badge fg">FG</span>'
+            if "Savant" in source:
+                badge = '<span class="badge fg">MLB+SV</span>'
             elif "MLB" in source:
                 badge = '<span class="badge mlb">MLB</span>'
             else:
@@ -737,16 +745,16 @@ def _render_data_table(data: List[Dict]) -> None:
                 + _td(era,     "era")
                 + _td(fip,     "fip")
                 + _td(xfip,    "xfip")
-                + _td(siera,   "siera")
                 + _td(whip,    "whip")
                 + _td(k_pct,   "k_pct")
-                + _td(era_plus,"era_plus")
+                + _td(d.get("whiff_pct"),    "k_pct")
+                + _td(d.get("hard_hit_pct"), "k_pct")
                 + f"<td>{badge}</td>"
                 + "</tr>"
             )
 
         headers = ["", "Team", "SP ERA", "BP ERA", "ERA",
-                   "FIP", "xFIP", "SIERA", "WHIP", "K%", "ERA+", "Source"]
+                   "FIP", "xFIP", "WHIP", "K%", "Whiff%", "Hard-Hit%", "Source"]
         th_html = "".join(f"<th>{h}</th>" for h in headers)
 
         table_html = (
@@ -760,7 +768,7 @@ def _render_data_table(data: List[Dict]) -> None:
         st.markdown(table_html, unsafe_allow_html=True)
         st.caption(
             "🟢 Green = strong / 🔴 Red = weak  ·  "
-            "FG badge = FanGraphs advanced metrics  ·  "
+            "MLB+SV badge = MLB API + Savant overlay  ·  "
             "MLB badge = MLB Stats API only  ·  "
             "Sorted by Starter ERA best → worst"
         )
@@ -783,9 +791,9 @@ def render_pitching_dashboard() -> None:
         st.error("❌ No data loaded. Check your internet connection or data pipeline.")
         return
 
-    # ── FanGraphs banner ──────────────────────────────────────────────────────
-    fg_count = sum(1 for d in data if "FanGraphs" in d.get("source", ""))
-    _render_fg_banner(fg_count)
+    # ── Data-source banner ────────────────────────────────────────────────────
+    savant_count = sum(1 for d in data if "Savant" in d.get("source", ""))
+    _render_fg_banner(savant_count)
 
     # ── Top performers strip ──────────────────────────────────────────────────
     _render_top_performers(data)
@@ -873,10 +881,10 @@ def render_pitching_dashboard() -> None:
             "Overall ERA":  ("era",          True),
             "FIP":          ("fip",          True),
             "xFIP":         ("xfip",         True),
-            "SIERA":        ("siera",        True),
             "WHIP":         ("whip",         True),
             "K%":           ("k_pct",        False),
-            "ERA+":         ("era_plus",     False),
+            "Whiff%":       ("whiff_pct",    False),
+            "Hard-Hit%":    ("hard_hit_pct", False),
         }
         c1, c2 = st.columns([2, 2])
         stat_label = c1.selectbox("Stat", list(stat_map.keys()), key="rank_stat")
@@ -888,7 +896,7 @@ def render_pitching_dashboard() -> None:
 
         rows_with_stat = _valid(data, stat_key)
         if not rows_with_stat:
-            st.info(f"No {stat_label} data available yet — needs FanGraphs (pybaseball).")
+            st.info(f"No {stat_label} data available yet — requires Baseball Savant overlay.")
         else:
             fig = chart_rankings(rows_with_stat, stat_key, stat_label,
                                   lower_is_better, n, best_first)
@@ -912,16 +920,13 @@ def render_pitching_dashboard() -> None:
     # ── TAB 3: K% vs ERA+ ────────────────────────────────────────────────────
     with tab3:
         st.markdown(
-            "**Sustainability quadrant.** "
-            "ERA+ is park-adjusted (100 = league avg). "
-            "Top-right = elite & sustainable. "
-            "Top-left = high ERA+ but low K% → may be BABIP luck."
+            "**Dominance quadrant.** "
+            "X-axis = K% (higher → more strikeouts). "
+            "Y-axis = ERA (lower → better). "
+            "Top-right on this chart = high K% and low ERA = elite sustainable pitching."
         )
-        if not any(d.get("k_pct") for d in data) or not any(d.get("era_plus") for d in data):
-            st.warning(
-                "⚠️ K% and/or ERA+ not available — requires FanGraphs (pybaseball). "
-                "Check installation or try again later."
-            )
+        if not any(d.get("k_pct") for d in data):
+            st.warning("⚠️ K% not yet available — may be early in the season.")
         else:
             fig = chart_kpct_vs_era_plus(data)
             if fig:
@@ -938,7 +943,7 @@ def render_pitching_dashboard() -> None:
             "🟢 Teal (negative) = ERA below FIP → outperforming, watch for decline."
         )
         if not any(d.get("fip") for d in data):
-            st.warning("FIP not available. Install pybaseball and ensure FanGraphs is reachable.")
+            st.warning("FIP not available yet — MLB API may be returning incomplete stats early in the season.")
         else:
             fig = chart_fip_era_gap(data)
             if fig:
@@ -977,7 +982,7 @@ def render_pitching_dashboard() -> None:
             "**FIP < xFIP** → suppressing HRs above average, potential regression."
         )
         if not any(d.get("xfip") for d in data):
-            st.warning("xFIP requires FanGraphs data. Install pybaseball or check network.")
+            st.warning("xFIP requires Baseball Savant overlay. Check network or try again later.")
         else:
             fig = chart_fip_xfip(data)
             if fig:
