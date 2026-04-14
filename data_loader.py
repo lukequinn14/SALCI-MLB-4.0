@@ -80,8 +80,59 @@ def load_todays_data(today: str) -> Tuple[Optional[Dict], str]:
 
 
 def get_pitchers(data: Dict) -> List[Dict]:
-    """Extract pitcher list from a loaded data file."""
-    return data.get("pitchers", [])
+    """
+    Extract and normalise pitcher list from a loaded data file.
+
+    Ensures every pitcher dict has the fields that mlb_salci_full.py's
+    reconciliation patch requires.  Without these the patch silently skips
+    every pitcher (via `if game_pk is None: continue`) and lineup_confirmed
+    is never updated from the stale JSON value.
+    """
+    pitchers = []
+    for raw in data.get("pitchers", []):
+        p = dict(raw)  # shallow copy — don't mutate the source
+
+        # ── Canonical name / id aliases ──────────────────────────────────────
+        if "pitcher" not in p and "pitcher_name" in p:
+            p["pitcher"] = p["pitcher_name"]
+        if "pitcher_id" not in p and "pid" in p:
+            p["pitcher_id"] = p["pid"]
+
+        # ── game_pk — CRITICAL for reconciliation patch ──────────────────────
+        # Stage 1 scripts may store this as "gamePk" or "game_id"
+        if p.get("game_pk") is None:
+            p["game_pk"] = p.get("gamePk") or p.get("game_id")
+
+        # ── opponent_id — needed for matchup upgrade path ────────────────────
+        if p.get("opponent_id") is None:
+            p["opponent_id"] = p.get("opp_id") or p.get("opponent_team_id")
+
+        # ── k_lines / lines — UI reads both keys ─────────────────────────────
+        if "k_lines" in p and "lines" not in p:
+            p["lines"] = p["k_lines"]
+        elif "lines" in p and "k_lines" not in p:
+            p["k_lines"] = p["lines"]
+
+        # ── lineup_confirmed — always a bool ────────────────────────────────
+        p["lineup_confirmed"] = bool(p.get("lineup_confirmed", False))
+
+        # ── Numeric defaults so SALCI re-calc never crashes on None ──────────
+        _defaults = {
+            "stuff_score":       100.0,
+            "location_score":    100.0,
+            "workload_score":     50.0,
+            "projected_ip":        5.5,
+            "salci":              50.0,
+            "expected":            5.0,
+            "floor":               4.0,
+            "floor_confidence":   65.0,
+        }
+        for field, default in _defaults.items():
+            if p.get(field) is None:
+                p[field] = default
+
+        pitchers.append(p)
+    return pitchers
 
 
 def data_freshness_label(data: Dict) -> str:
@@ -103,22 +154,41 @@ def confirmed_lineup_count(data: Dict) -> int:
     return sum(1 for p in data.get("pitchers", []) if p.get("lineup_confirmed"))
 
 
-def source_banner(data: Dict, source: str) -> Tuple[str, str]:
+def source_banner(
+    data: Dict,
+    source: str,
+    live_confirmed_count: Optional[int] = None,
+    total_pitchers: Optional[int] = None,
+) -> Tuple[str, str]:
     """
     Returns (message, streamlit_level) for st.success / st.info / st.warning.
+
+    Parameters
+    ----------
+    data                 : the pre-computed dict returned by load_todays_data()
+    source               : "final" | "base" | "live"
+    live_confirmed_count : number of GAMES with confirmed lineups per live MLB API.
+                           When passed, this replaces the stale JSON count so the
+                           banner always reflects current reality.
+    total_pitchers       : total pitcher count after get_pitchers() — pass
+                           len(all_pitcher_results) for an accurate denominator.
     """
     freshness = data_freshness_label(data)
-    confirmed = confirmed_lineup_count(data)
-    total     = len(data.get("pitchers", []))
+
+    # Prefer live count (real-time) over stale JSON count
+    if live_confirmed_count is not None:
+        confirmed_str = f"{live_confirmed_count} games confirmed"
+    else:
+        confirmed = confirmed_lineup_count(data)
+        total     = total_pitchers if total_pitchers is not None else len(data.get("pitchers", []))
+        confirmed_str = f"{confirmed}/{total} lineups locked"
 
     if source == "final":
-        msg = (f"✅ Lineup-confirmed data · "
-               f"{confirmed}/{total} lineups locked · updated {freshness}")
+        msg = f"✅ Lineup-confirmed data · {confirmed_str} · updated {freshness}"
         return msg, "success"
 
     if source == "base":
-        msg = (f"📊 Pre-computed base data · "
-               f"lineups not yet confirmed · built {freshness}")
+        msg = f"📋 Pre-computed base data · {confirmed_str} · updated {freshness} · lineups patched live"
         return msg, "info"
 
     return "⚠️ No pre-computed data — running live calculations", "warning"
