@@ -1794,12 +1794,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     with col_away:
         # border-open div
         st.markdown(
-            <div style='
-                border:1px solid #374151;
-                border-radius:12px;
-                padding:14px;
-                background: linear-gradient(145deg, #1f2937, #111827);
-            '>
+            "<div style='border:1px solid #374151;border-radius:10px;"
             "padding:12px 14px;margin-bottom:4px;'>",
             unsafe_allow_html=True,
         )
@@ -1931,12 +1926,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     with col_home:
         # border-open div
         st.markdown(
-            <div style='
-                border:1px solid #374151;
-                border-radius:12px;
-                padding:14px;
-                background: linear-gradient(145deg, #1f2937, #111827);
-            '>
+            "<div style='border:1px solid #374151;border-radius:10px;"
             "padding:12px 14px;margin-bottom:4px;'>",
             unsafe_allow_html=True,
         )
