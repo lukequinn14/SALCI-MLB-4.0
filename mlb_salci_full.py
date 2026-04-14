@@ -1725,7 +1725,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     away_logo       = get_team_logo_url(away_team)
 
     def _comp_color(score, is_100_scale=True):
-        if score is None: return "#9ca3af"
+        if score is None: return "#64748b"
         if is_100_scale:
             if score >= 115: return "#10b981"
             if score >= 105: return "#22c55e"
@@ -1743,21 +1743,22 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
             return round(min(100, max(0, (score - 70) * 2)), 1)
         return round(min(100, max(0, float(score))), 1)
 
-    delta      = home_salci - away_salci
+    delta = home_salci - away_salci
     if abs(delta) <= 4:
-        edge_label = "Even Matchup"
+        edge_team  = "Even"
         edge_color = "#eab308"
-        conf_label = "PUSH"
+        edge_sub   = "Closely matched starters"
     elif delta > 0:
-        edge_label = f"{home_team} Edge"
+        edge_team  = home_team
         edge_color = "#22c55e"
-        conf_label = "HOME ADVANTAGE"
+        edge_sub   = f"{home_team} has the pitching edge"
     else:
-        edge_label = f"{away_team} Edge"
+        edge_team  = away_team
         edge_color = "#ef4444"
-        conf_label = "AWAY ADVANTAGE"
+        edge_sub   = f"{away_team} has the pitching edge"
 
     confidence = min(int(abs(delta) * 4), 100)
+    conf_label = "Low" if confidence < 30 else "Medium" if confidence < 60 else "High"
 
     def _hot_count(side):
         lineup = lineup_status.get(game_pk, {}).get(side, {}).get("lineup", [])
@@ -1773,27 +1774,37 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     _, home_emoji, _ = get_rating(home_salci)
     _, away_emoji, _ = get_rating(away_salci)
 
-    # ── CARD CONTAINER ────────────────────────────────────────────────────────
+    # ── OUTER CARD ────────────────────────────────────────────────────────────
     st.markdown(
-        "<div style='background:#0f172a;border-radius:16px;padding:0;margin-bottom:20px;"
-        "border:1px solid #1f2937;overflow:hidden;'>",
+        "<div style='background:#0f172a;border-radius:14px;margin-bottom:20px;"
+        "border:1px solid #1e293b;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.4);'>",
         unsafe_allow_html=True,
     )
 
-    # ── HEADER: Away Logo + Name  @  Home Name + Logo ─────────────────────────
+    # ── HEADER: logos + team names ────────────────────────────────────────────
     st.markdown(
-        f"<div style='background:linear-gradient(135deg,#0f2744,#1a3a6b);"
-        f"padding:12px 20px;display:flex;align-items:center;justify-content:space-between;'>"
-        f"  <div style='display:flex;align-items:center;gap:10px;'>"
-        f"    <img src='{away_logo}' style='height:40px;width:40px;object-fit:contain;' onerror=\"this.style.display='none'\"/>"
-        f"    <span style='font-size:1rem;font-weight:700;color:#e2e8f0;'>{away_team}</span>"
-        f"    <span style='font-size:0.75rem;color:#94a3b8;font-weight:400;'>AWAY</span>"
+        f"<div style='background:linear-gradient(135deg,#0d1f3c 0%,#1a3a6b 60%,#0d1f3c 100%);"
+        f"padding:14px 24px;display:flex;align-items:center;justify-content:space-between;"
+        f"border-bottom:1px solid #1e3a5f;'>"
+        # Away side
+        f"  <div style='display:flex;align-items:center;gap:12px;'>"
+        f"    <img src='{away_logo}' style='height:44px;width:44px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.5));' onerror=\"this.style.display='none'\"/>"
+        f"    <div>"
+        f"      <div style='font-size:1.05rem;font-weight:700;color:#f1f5f9;line-height:1;'>{away_team}</div>"
+        f"      <div style='font-size:0.65rem;color:#64748b;font-weight:600;letter-spacing:1.5px;margin-top:2px;'>AWAY</div>"
+        f"    </div>"
         f"  </div>"
-        f"  <span style='font-size:0.7rem;color:#64748b;font-weight:600;letter-spacing:2px;'>VS</span>"
-        f"  <div style='display:flex;align-items:center;gap:10px;'>"
-        f"    <span style='font-size:0.75rem;color:#94a3b8;font-weight:400;'>HOME</span>"
-        f"    <span style='font-size:1rem;font-weight:700;color:#e2e8f0;'>{home_team}</span>"
-        f"    <img src='{home_logo}' style='height:40px;width:40px;object-fit:contain;' onerror=\"this.style.display='none'\"/>"
+        # Center VS
+        f"  <div style='text-align:center;'>"
+        f"    <div style='font-size:0.65rem;color:#334155;font-weight:700;letter-spacing:3px;'>VS</div>"
+        f"  </div>"
+        # Home side
+        f"  <div style='display:flex;align-items:center;gap:12px;'>"
+        f"    <div style='text-align:right;'>"
+        f"      <div style='font-size:1.05rem;font-weight:700;color:#f1f5f9;line-height:1;'>{home_team}</div>"
+        f"      <div style='font-size:0.65rem;color:#64748b;font-weight:600;letter-spacing:1.5px;margin-top:2px;'>HOME</div>"
+        f"    </div>"
+        f"    <img src='{home_logo}' style='height:44px;width:44px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.5));' onerror=\"this.style.display='none'\"/>"
         f"  </div>"
         f"</div>",
         unsafe_allow_html=True,
@@ -1802,140 +1813,218 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     # ── THREE-COLUMN BODY ─────────────────────────────────────────────────────
     col_away, col_vs, col_home = st.columns([5, 3, 5])
 
-    def _render_pitcher_panel(pitcher, hand, salci, salci_color, grade, emoji,
-                               exp, floor, floor_conf, hot_count, lineup_sz, logo_url, team):
-        is_statcast  = pitcher.get("is_statcast", False)
-        badge_txt    = "Statcast" if is_statcast else "Stats API"
-        badge_color  = "#10b981" if is_statcast else "#475569"
-        prof         = pitcher.get("profile_type", "") or ""
-        prof_clean   = prof if prof not in ("BALANCED", "N/A", "") else ""
+    def _render_pitcher_panel(pitcher, hand, salci, salci_color, grade,
+                               exp, floor, floor_conf, hot_count, lineup_sz):
+        is_statcast = pitcher.get("is_statcast", False)
+        badge_txt   = "Statcast" if is_statcast else "Stats API"
+        badge_color = "#059669" if is_statcast else "#475569"
+        prof        = pitcher.get("profile_type", "") or ""
+        prof_clean  = prof if prof not in ("BALANCED", "N/A", "") else ""
 
+        # Stat pill helper
+        def pill(label, val, color="#94a3b8"):
+            return (
+                f"<div style='background:#1e293b;border-radius:6px;padding:6px 10px;text-align:center;min-width:52px;'>"
+                f"<div style='font-size:0.58rem;color:#64748b;font-weight:600;letter-spacing:0.8px;margin-bottom:2px;'>{label}</div>"
+                f"<div style='font-size:0.9rem;font-weight:700;color:{color};'>{val}</div>"
+                f"</div>"
+            )
+
+        # ── Panel open — name is the very first thing inside ──────────────────
         st.markdown(
-            f"<div style='background:#020617;border:1px solid #1e293b;border-radius:0;padding:16px;'>"
-            f"<div style='font-size:1.1rem;font-weight:700;color:#f1f5f9;margin-bottom:2px;'>"
-            f"{pitcher['pitcher']} <span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>({hand}HP)</span>"
+            f"<div style='background:#0a111e;padding:18px 16px 14px 16px;height:100%;'>"
+
+            # Row 1: Pitcher name + hand
+            f"<div style='font-size:1.15rem;font-weight:700;color:#f1f5f9;"
+            f"margin-bottom:4px;line-height:1.1;'>{pitcher['pitcher']}"
+            f"<span style='font-size:0.78rem;font-weight:500;color:#64748b;margin-left:6px;'>({hand}HP)</span>"
             f"</div>"
-            f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:10px;'>"
-            f"  <span style='font-size:0.7rem;background:{badge_color};color:white;"
-            f"  padding:2px 6px;border-radius:4px;font-weight:600;'>{badge_txt}</span>"
-            f"  {'<span style=\"font-size:0.7rem;color:#a78bfa;\">' + prof_clean + '</span>' if prof_clean else ''}"
+
+            # Row 2: badges
+            f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:14px;'>"
+            f"<span style='font-size:0.65rem;background:{badge_color};color:#fff;"
+            f"padding:2px 7px;border-radius:4px;font-weight:600;letter-spacing:0.4px;'>{badge_txt}</span>"
+            f"{'<span style=\"font-size:0.65rem;color:#a78bfa;background:#2d1b69;padding:2px 7px;border-radius:4px;font-weight:600;\">' + prof_clean + '</span>' if prof_clean else ''}"
+            f"</div>"
+
+            # Row 3: SALCI score block
+            f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:12px;'>"
+            f"  <div>"
+            f"    <div style='font-size:0.58rem;color:#475569;font-weight:600;letter-spacing:1px;margin-bottom:1px;'>SALCI SCORE</div>"
+            f"    <div style='font-size:2.6rem;font-weight:900;color:{salci_color};"
+            f"    line-height:1;letter-spacing:-1px;'>{salci:.1f}"
+            f"    <span style='font-size:0.9rem;color:#64748b;font-weight:600;margin-left:4px;'>{grade}</span>"
+            f"    </div>"
+            f"  </div>"
+            f"  <div style='border-left:1px solid #1e293b;padding-left:12px;'>"
+            f"    <div style='font-size:0.58rem;color:#475569;font-weight:600;letter-spacing:1px;margin-bottom:3px;'>EXP. K's</div>"
+            f"    <div style='font-size:1.5rem;font-weight:800;color:#cbd5e1;line-height:1;'>{exp}</div>"
+            f"    {'<div style=\"font-size:0.68rem;color:#10b981;font-weight:600;margin-top:3px;\">Floor ' + str(floor) + ' (' + str(floor_conf) + '% conf)</div>' if floor is not None else ''}"
+            f"  </div>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
-        # SALCI + Exp Ks + Floor all inline
-        floor_html = (
-            f"<span style='font-size:0.72rem;color:#10b981;font-weight:600;margin-left:14px;'>"
-            f"Floor: {floor} Ks ({floor_conf}% conf)</span>"
-            if floor is not None else ""
-        )
-        st.markdown(
-            f"<div style='display:flex;align-items:baseline;flex-wrap:wrap;gap:4px;margin-bottom:10px;'>"
-            f"  <span style='font-size:2.4rem;font-weight:900;color:{salci_color};"
-            f"  line-height:1;letter-spacing:-1px;'>{salci:.1f}</span>"
-            f"  <span style='font-size:1rem;font-weight:600;color:#94a3b8;margin-left:6px;'>{emoji} {grade}</span>"
-            f"  <span style='font-size:0.82rem;color:#cbd5e1;margin-left:12px;'>"
-            f"  Exp Ks: <strong style='color:#f1f5f9;'>{exp}</strong></span>"
-            f"  {floor_html}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-        # K-lines
+        # K-line pills row
         klines = pitcher.get("k_lines", {}) or pitcher.get("lines", {})
         if klines:
-            k_cols = st.columns(min(4, len(klines)))
-            for i, (kv, prob) in enumerate(sorted(klines.items())[:4]):
+            items = sorted(klines.items())[:4]
+            pills_html = "<div style='display:flex;gap:6px;margin-bottom:14px;'>"
+            for kv, prob in items:
                 kc = "#22c55e" if prob >= 70 else "#eab308" if prob >= 50 else "#ef4444"
-                with k_cols[i]:
-                    st.markdown(
-                        f"<div style='text-align:center;'>"
-                        f"<div style='font-size:0.6rem;color:#64748b;font-weight:600;'>{kv}+</div>"
-                        f"<div style='font-size:0.9rem;font-weight:700;color:{kc};'>{prob}%</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+                pills_html += (
+                    f"<div style='background:#1e293b;border-radius:6px;padding:5px 8px;"
+                    f"text-align:center;flex:1;border-top:2px solid {kc};'>"
+                    f"<div style='font-size:0.58rem;color:#64748b;font-weight:600;'>{kv}+</div>"
+                    f"<div style='font-size:0.88rem;font-weight:700;color:{kc};'>{prob}%</div>"
+                    f"</div>"
+                )
+            pills_html += "</div>"
+            st.markdown(pills_html, unsafe_allow_html=True)
 
         # Component scores
-        st.markdown("<div style='margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;'></div>",
-                    unsafe_allow_html=True)
         comp_cols = st.columns(4)
         components = [
-            ("STUFF",   pitcher.get("stuff_score"),    True),
-            ("MATCH",   pitcher.get("matchup_score"),  False),
-            ("WORK",    pitcher.get("workload_score"), False),
-            ("LOC",     pitcher.get("location_score"), True),
+            ("STUFF",  pitcher.get("stuff_score"),    True),
+            ("MATCH",  pitcher.get("matchup_score"),  False),
+            ("WORK",   pitcher.get("workload_score"), False),
+            ("LOC",    pitcher.get("location_score"), True),
         ]
         for i, (lbl, score, is100) in enumerate(components):
             with comp_cols[i]:
                 if score is None:
                     st.markdown(
-                        f"<div style='text-align:center;color:#475569;font-size:0.65rem;'>{lbl}<br>—</div>",
+                        f"<div style='text-align:center;background:#1e293b;border-radius:6px;"
+                        f"padding:6px 4px;'>"
+                        f"<div style='font-size:0.58rem;color:#475569;font-weight:600;letter-spacing:0.5px;'>{lbl}</div>"
+                        f"<div style='font-size:0.85rem;color:#334155;'>—</div>"
+                        f"</div>",
                         unsafe_allow_html=True,
                     )
                 else:
                     cc  = _comp_color(score, is100)
                     pct = _bar_pct(score, is100)
                     st.markdown(
-                        f"<div style='text-align:center;'>"
-                        f"<div style='font-size:0.58rem;color:#64748b;font-weight:600;letter-spacing:0.5px;'>{lbl}</div>"
-                        f"<div style='font-size:1rem;font-weight:700;color:{cc};'>{int(score)}</div>"
-                        f"<div style='background:#1e293b;border-radius:3px;height:4px;margin-top:3px;'>"
+                        f"<div style='text-align:center;background:#1e293b;border-radius:6px;"
+                        f"padding:6px 4px;border-top:2px solid {cc};'>"
+                        f"<div style='font-size:0.58rem;color:#64748b;font-weight:600;"
+                        f"letter-spacing:0.5px;margin-bottom:2px;'>{lbl}</div>"
+                        f"<div style='font-size:1rem;font-weight:800;color:{cc};'>{int(score)}</div>"
+                        f"<div style='background:#0f172a;border-radius:3px;height:3px;margin-top:4px;'>"
                         f"<div style='width:{pct}%;background:{cc};border-radius:3px;height:100%;'></div>"
                         f"</div></div>",
                         unsafe_allow_html=True,
                     )
 
-        # Footer meta
+        # Footer meta row
+        lineup_confirmed = lineup_sz > 0
+        lineup_txt = f"{lineup_sz} batters confirmed" if lineup_confirmed else "Lineup pending"
+        lineup_color = "#10b981" if lineup_confirmed else "#f59e0b"
         st.markdown(
-            f"<div style='margin-top:10px;font-size:0.7rem;color:#475569;'>"
-            f"Opp. hot hitters: {hot_count} &nbsp;|&nbsp; Opp. lineup: {lineup_sz}"
+            f"<div style='margin-top:12px;padding-top:10px;border-top:1px solid #1e293b;"
+            f"display:flex;justify-content:space-between;align-items:center;'>"
+            f"<span style='font-size:0.68rem;color:#475569;'>Hot opp. hitters: "
+            f"<strong style='color:{'#f97316' if hot_count > 0 else '#475569'};'>{hot_count}</strong></span>"
+            f"<span style='font-size:0.68rem;color:{lineup_color};font-weight:600;'>{lineup_txt}</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_away:
         _render_pitcher_panel(
-            away_pitcher, away_hand, away_salci, away_salci_color, away_grade, away_emoji,
+            away_pitcher, away_hand, away_salci, away_salci_color, away_grade,
             away_exp, away_floor, away_floor_conf, home_hot, home_lineup_sz,
-            away_logo, away_team,
         )
 
+    # ── CENTER EDGE PANEL ─────────────────────────────────────────────────────
     with col_vs:
+        # Which pitcher has edge — used for mini stat comparison
+        leader    = away_pitcher if away_salci > home_salci else home_pitcher
+        leader_nm = leader["pitcher"].split()[-1]
+
         st.markdown(
-            f"<div style='background:#020617;border-left:1px solid #1e293b;"
-            f"border-right:1px solid #1e293b;padding:24px 12px;text-align:center;height:100%;'>"
-            f"<div style='font-size:0.62rem;color:#475569;letter-spacing:2px;font-weight:700;"
-            f"margin-bottom:8px;'>SALCI EDGE</div>"
-            f"<div style='font-size:1.25rem;font-weight:800;color:{edge_color};"
-            f"line-height:1.2;margin-bottom:6px;'>{edge_label}</div>"
-            f"<div style='font-size:0.85rem;color:#64748b;margin-bottom:16px;'>"
-            f"&#916; {delta:+.1f}</div>"
-            f"<div style='font-size:0.58rem;color:#475569;letter-spacing:1px;margin-bottom:4px;'>CONFIDENCE</div>"
+            f"<div style='background:#060e1a;border-left:1px solid #1e293b;"
+            f"border-right:1px solid #1e293b;padding:24px 14px;text-align:center;"
+            f"height:100%;display:flex;flex-direction:column;align-items:center;"
+            f"justify-content:center;gap:0;'>"
+
+            # Edge label
+            f"<div style='font-size:0.58rem;color:#334155;font-weight:700;"
+            f"letter-spacing:2.5px;margin-bottom:8px;'>PITCHING EDGE</div>"
+            f"<div style='font-size:1.1rem;font-weight:800;color:{edge_color};"
+            f"line-height:1.25;margin-bottom:4px;'>{edge_team}</div>"
+            f"<div style='font-size:0.68rem;color:#475569;margin-bottom:16px;'>{edge_sub}</div>"
+
+            # Delta chip
+            f"<div style='background:#1e293b;border-radius:20px;padding:4px 14px;"
+            f"margin-bottom:16px;display:inline-block;'>"
+            f"<span style='font-size:0.75rem;font-weight:700;color:#94a3b8;'>"
+            f"&#916; {abs(delta):.1f} pts</span>"
+            f"</div>"
+
+            # Confidence meter label
+            f"<div style='font-size:0.58rem;color:#334155;font-weight:700;"
+            f"letter-spacing:2px;margin-bottom:6px;'>CONFIDENCE</div>"
+            f"<div style='font-size:0.78rem;font-weight:700;color:{edge_color};"
+            f"margin-bottom:6px;'>{conf_label}</div>"
+
             f"</div>",
             unsafe_allow_html=True,
         )
         st.progress(confidence / 100)
 
+        # SALCI comparison mini-table
+        st.markdown(
+            f"<div style='background:#060e1a;border-left:1px solid #1e293b;"
+            f"border-right:1px solid #1e293b;padding:10px 14px 18px 14px;'>"
+            f"<div style='font-size:0.58rem;color:#334155;font-weight:700;"
+            f"letter-spacing:2px;text-align:center;margin-bottom:10px;'>SALCI COMPARISON</div>"
+
+            # Away row
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"margin-bottom:6px;'>"
+            f"<span style='font-size:0.7rem;color:#94a3b8;'>{away_pitcher['pitcher'].split()[-1]}</span>"
+            f"<span style='font-size:0.8rem;font-weight:700;color:{away_salci_color};'>{away_salci:.1f}</span>"
+            f"</div>"
+            # Away bar
+            f"<div style='background:#1e293b;border-radius:3px;height:4px;margin-bottom:10px;'>"
+            f"<div style='width:{min(away_salci, 100)}%;background:{away_salci_color};"
+            f"border-radius:3px;height:100%;'></div></div>"
+
+            # Home row
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"margin-bottom:6px;'>"
+            f"<span style='font-size:0.7rem;color:#94a3b8;'>{home_pitcher['pitcher'].split()[-1]}</span>"
+            f"<span style='font-size:0.8rem;font-weight:700;color:{home_salci_color};'>{home_salci:.1f}</span>"
+            f"</div>"
+            # Home bar
+            f"<div style='background:#1e293b;border-radius:3px;height:4px;'>"
+            f"<div style='width:{min(home_salci, 100)}%;background:{home_salci_color};"
+            f"border-radius:3px;height:100%;'></div></div>"
+
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     with col_home:
         _render_pitcher_panel(
-            home_pitcher, home_hand, home_salci, home_salci_color, home_grade, home_emoji,
+            home_pitcher, home_hand, home_salci, home_salci_color, home_grade,
             home_exp, home_floor, home_floor_conf, away_hot, away_lineup_sz,
-            home_logo, home_team,
         )
 
     # ── FOOTER ────────────────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='background:#0a1628;border-top:1px solid #1e293b;"
+        f"<div style='background:#060e1a;border-top:1px solid #1e293b;"
         f"padding:8px 20px;display:flex;justify-content:space-between;align-items:center;'>"
-        f"<span style='font-size:0.7rem;color:#475569;'>{away_team} @ {home_team}</span>"
-        f"<span style='font-size:0.7rem;color:#475569;'>SALCI v{SALCI_VERSION}</span>"
+        f"<span style='font-size:0.68rem;color:#334155;'>{away_team} @ {home_team}</span>"
+        f"<span style='font-size:0.68rem;color:#334155;'>SALCI v{SALCI_VERSION}</span>"
         f"</div>"
-        f"</div>",
+        f"</div>",  # closes outer card
         unsafe_allow_html=True,
     )
-    st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
 
 def render_compact_summary(pitcher_results: List[Dict]):
