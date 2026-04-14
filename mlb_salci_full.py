@@ -1765,16 +1765,11 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     _, away_emoji, _ = get_rating(away_salci)
 
 
-    # ── OUTER CARD CONTAINER ─────────────────────────────────────────────────
-    st.markdown("""
-    <div style='
-        background: #111827;
-        border-radius: 16px;
-        padding: 16px;
-        margin-bottom: 20px;
-        border: 1px solid #374151;
-    '>
-    """, unsafe_allow_html=True)
+    # ── OUTER CARD CONTAINER START ───────────────────────────────────────────
+    st.markdown(
+        "<div style='background:#0f172a; border-radius:16px; padding:14px; margin-bottom:18px; border:1px solid #1f2937;'>",
+        unsafe_allow_html=True
+    )
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(
         "<div style='background:linear-gradient(135deg,#1e3a5f,#2e5a8f);"
@@ -1794,8 +1789,8 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     with col_away:
         # border-open div
         st.markdown(
-            "<div style='border:1px solid #374151;border-radius:10px;"
-            "padding:12px 14px;margin-bottom:4px;'>",
+            "<div style='background:#020617; border:1px solid #374151; border-radius:12px;"
+            "padding:14px; height:100%;'>",
             unsafe_allow_html=True,
         )
 
@@ -1896,6 +1891,20 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     with col_vs:
         st.markdown(
             f"""
+            <div style='text-align:center; padding-top:20px;'>
+                <div style='font-size:0.75rem; color:#9ca3af; margin-bottom:6px;'>MATCHUP EDGE</div>
+                <div style='font-size:1.4rem; font-weight:700; color:{edge_color};'>{edge_label}</div>
+                <div style='font-size:0.9rem; color:#d1d5db;'>Δ {delta:.1f}</div>
+                <div style='margin-top:10px; font-size:0.7rem; color:#6b7280;'>Confidence</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+        st.progress(confidence / 100)
+        
+        st.markdown(
+            f"""
             <div style='
                 text-align:center;
                 padding-top:20px;
@@ -1926,8 +1935,8 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     with col_home:
         # border-open div
         st.markdown(
-            "<div style='border:1px solid #374151;border-radius:10px;"
-            "padding:12px 14px;margin-bottom:4px;'>",
+            "<div style='background:#020617; border:1px solid #374151; border-radius:12px;"
+            "padding:14px; height:100%;'>",
             unsafe_allow_html=True,
         )
 
@@ -2036,7 +2045,8 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     st.markdown("---")
 
     # ── CLOSE CARD ───────────────────────────────────────────────────────────
-    st.markdown("</div>", unsafe_allow_html=True)
+    # ── OUTER CARD CONTAINER END ─────────────────────────────────────────────
+st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_compact_summary(pitcher_results: List[Dict]):
