@@ -2776,58 +2776,100 @@ def main():
                         "profile_type": "N/A",
                     })
             
-            # Hitter processing
-            if show_hitters:
-                opp_lineup_info = game_lineups[opp_side]
-                
-                if opp_lineup_info["confirmed"] or not confirmed_only:
-                    lineup = opp_lineup_info["lineup"]
-                    
-                    for player in lineup:
-                        h_recent = get_hitter_recent_stats(player["id"], 7)
-                        h_season = get_hitter_season_stats(player["id"], current_season)
-                        if h_recent:
-                            h_score = compute_hitter_score(h_recent)
-                            if not hot_hitters_only or h_score >= 60:
-                                # Compute Log5 Hit Score if hit_likelihood is available
-                                hit_prob_score = None
-                                hit_prob_breakdown = {}
-                                if HIT_LIKELIHOOD_AVAILABLE:
-                                    try:
-                                        batter_stats = {
-                                            "avg": (h_season or {}).get("avg") or h_recent.get("avg", 0.248),
-                                            "l7_avg": h_recent.get("avg"),
-                                            "bat_side": player.get("bat_side", "R"),
-                                        }
-                                        pitcher_stats_for_log5 = {
-                                            "avg_against": (p_baseline or p_recent or {}).get("avg_against", 0.248),
-                                            "pitcher_hand": pitcher_hand,
-                                        }
-                                        hit_prob_score, hit_prob_breakdown = calculate_hitter_hit_prob(
-                                            batter_stats, pitcher_stats_for_log5, league_avg=0.248
-                                        )
-                                    except Exception:
-                                        pass
-                                all_hitter_results.append({
-                                    "name": player["name"],
-                                    "player_id": player["id"],
-                                    "position": player["position"],
-                                    "batting_order": player["batting_order"],
-                                    "bat_side": player["bat_side"],
-                                    "team": opp,
-                                    "vs_pitcher": pitcher,
-                                    "pitcher_hand": pitcher_hand,
-                                    "pitcher_k_pct": (p_baseline or p_recent or {}).get("K_percent", 0.22),
-                                    "game_pk": game_pk,
-                                    "recent": h_recent,
-                                    "season": h_season or {},
-                                    "score": h_score,
-                                    "lineup_confirmed": opp_lineup_info["confirmed"],
-                                    "hit_prob_score": hit_prob_score,
-                                    "hit_prob_breakdown": hit_prob_breakdown,
-                                })
-    
-      progress.empty()
+    if not _precomputed_loaded:
+        progress.empty()
+
+    # ── HITTER PROCESSING (always runs, regardless of pre-compute path) ──────
+    # This block is intentionally outside the `if not _precomputed_loaded` guard.
+    # Pitchers may come from JSON (Stage 1), but hitters always need a live lineup
+    # fetch because lineups aren't stored in daily_base.json.
+    if show_hitters:
+        # Build a lookup of pitcher context keyed by (game_pk, opp_side)
+        # so hitter cards can reference the correct opposing pitcher stats.
+        pitcher_context = {}
+        for result in all_pitcher_results:
+            gpk = result.get("game_pk")
+            game_obj = next((g for g in games if g["game_pk"] == gpk), None)
+            if game_obj is None:
+                continue
+            p_team = result.get("team")
+            opp_side_key = "away" if p_team == game_obj.get("home_team") else "home"
+            pitcher_context[(gpk, opp_side_key)] = result
+
+        for game in games:
+            game_pk = game["game_pk"]
+            game_lineup_status = lineup_status[game_pk]
+
+            for side in ["home", "away"]:
+                opp_side = "away" if side == "home" else "home"
+                opp_lineup_info = game_lineup_status[opp_side]
+
+                # Respect the "Confirmed Lineups Only" filter
+                if not opp_lineup_info["confirmed"] and confirmed_only:
+                    continue
+
+                lineup = opp_lineup_info.get("lineup", [])
+                if not lineup:
+                    continue
+
+                # Find the pitcher facing this lineup
+                pitcher_ctx = pitcher_context.get((game_pk, opp_side), {})
+                pitcher = pitcher_ctx.get("pitcher") or game.get(f"{side}_pitcher", "TBD")
+                pitcher_hand = pitcher_ctx.get("pitcher_hand") or game.get(f"{side}_pitcher_hand", "R")
+                pid = pitcher_ctx.get("pitcher_id") or game.get(f"{side}_pid")
+                opp_team = game.get(f"{'away' if side == 'home' else 'home'}_team")
+
+                # Load pitcher baseline for hit-prob calc (cached, cheap)
+                p_recent_ctx = get_recent_pitcher_stats(pid, 7) if pid else None
+                p_baseline_ctx = parse_season_stats(get_player_season_stats(pid, current_season)) if pid else None
+
+                for player in lineup:
+                    h_recent = get_hitter_recent_stats(player["id"], 7)
+                    h_season = get_hitter_season_stats(player["id"], current_season)
+                    if not h_recent:
+                        continue
+
+                    h_score = compute_hitter_score(h_recent)
+                    if hot_hitters_only and h_score < 60:
+                        continue
+
+                    hit_prob_score = None
+                    hit_prob_breakdown = {}
+                    if HIT_LIKELIHOOD_AVAILABLE:
+                        try:
+                            batter_stats = {
+                                "avg": (h_season or {}).get("avg") or h_recent.get("avg", 0.248),
+                                "l7_avg": h_recent.get("avg"),
+                                "bat_side": player.get("bat_side", "R"),
+                            }
+                            pitcher_stats_for_log5 = {
+                                "avg_against": (p_baseline_ctx or p_recent_ctx or {}).get("avg_against", 0.248),
+                                "pitcher_hand": pitcher_hand,
+                            }
+                            hit_prob_score, hit_prob_breakdown = calculate_hitter_hit_prob(
+                                batter_stats, pitcher_stats_for_log5, league_avg=0.248
+                            )
+                        except Exception:
+                            pass
+
+                    all_hitter_results.append({
+                        "name": player["name"],
+                        "player_id": player["id"],
+                        "position": player["position"],
+                        "batting_order": player["batting_order"],
+                        "bat_side": player.get("bat_side", "R"),
+                        "team": opp_team,
+                        "vs_pitcher": pitcher,
+                        "pitcher_hand": pitcher_hand,
+                        "pitcher_k_pct": (p_baseline_ctx or p_recent_ctx or {}).get("K_percent", 0.22),
+                        "game_pk": game_pk,
+                        "recent": h_recent,
+                        "season": h_season or {},
+                        "score": h_score,
+                        "lineup_confirmed": opp_lineup_info["confirmed"],
+                        "hit_prob_score": hit_prob_score,
+                        "hit_prob_breakdown": hit_prob_breakdown,
+                    })
 
     # Sort results
     all_pitcher_results.sort(key=lambda x: x["salci"], reverse=True)
