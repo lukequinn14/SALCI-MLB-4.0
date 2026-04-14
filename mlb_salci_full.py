@@ -1811,13 +1811,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         prof_clean   = prof if prof not in ("BALANCED", "N/A", "") else ""
 
         st.markdown(
-            f"<div style='background:#020617;border:1px solid #1e293b;border-radius:0;"
-            f"padding:16px;'>",
-            unsafe_allow_html=True,
-        )
-
-        # Pitcher name row
-        st.markdown(
+            f"<div style='background:#020617;border:1px solid #1e293b;border-radius:0;padding:16px;'>"
             f"<div style='font-size:1.1rem;font-weight:700;color:#f1f5f9;margin-bottom:2px;'>"
             f"{pitcher['pitcher']} <span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>({hand}HP)</span>"
             f"</div>"
@@ -1829,27 +1823,23 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
             unsafe_allow_html=True,
         )
 
-        # SALCI score
+        # SALCI + Exp Ks + Floor all inline
+        floor_html = (
+            f"<span style='font-size:0.72rem;color:#10b981;font-weight:600;margin-left:14px;'>"
+            f"Floor: {floor} Ks ({floor_conf}% conf)</span>"
+            if floor is not None else ""
+        )
         st.markdown(
-            f"<div style='font-size:2.4rem;font-weight:900;color:{salci_color};"
-            f"line-height:1;letter-spacing:-1px;'>{salci:.1f}"
-            f"<span style='font-size:1rem;font-weight:600;color:#94a3b8;margin-left:8px;'>"
-            f"{emoji} {grade}</span></div>",
+            f"<div style='display:flex;align-items:baseline;flex-wrap:wrap;gap:4px;margin-bottom:10px;'>"
+            f"  <span style='font-size:2.4rem;font-weight:900;color:{salci_color};"
+            f"  line-height:1;letter-spacing:-1px;'>{salci:.1f}</span>"
+            f"  <span style='font-size:1rem;font-weight:600;color:#94a3b8;margin-left:6px;'>{emoji} {grade}</span>"
+            f"  <span style='font-size:0.82rem;color:#cbd5e1;margin-left:12px;'>"
+            f"  Exp Ks: <strong style='color:#f1f5f9;'>{exp}</strong></span>"
+            f"  {floor_html}"
+            f"</div>",
             unsafe_allow_html=True,
         )
-
-        # Expected + floor
-        st.markdown(
-            f"<div style='font-size:0.82rem;color:#cbd5e1;margin-top:6px;'>"
-            f"Exp Ks: <strong style='color:#f1f5f9;'>{exp}</strong></div>",
-            unsafe_allow_html=True,
-        )
-        if floor is not None:
-            st.markdown(
-                f"<div style='font-size:0.75rem;color:#10b981;font-weight:600;margin-bottom:6px;'>"
-                f"Floor: {floor} Ks ({floor_conf}% conf)</div>",
-                unsafe_allow_html=True,
-            )
 
         # K-lines
         klines = pitcher.get("k_lines", {}) or pitcher.get("lines", {})
@@ -1940,10 +1930,9 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         f"<div style='background:#0a1628;border-top:1px solid #1e293b;"
         f"padding:8px 20px;display:flex;justify-content:space-between;align-items:center;'>"
         f"<span style='font-size:0.7rem;color:#475569;'>{away_team} @ {home_team}</span>"
-        f"<span style='font-size:0.75rem;font-weight:700;color:{edge_color};'>{conf_label}</span>"
         f"<span style='font-size:0.7rem;color:#475569;'>SALCI v{SALCI_VERSION}</span>"
         f"</div>"
-        f"</div>",  # closes outer card container
+        f"</div>",
         unsafe_allow_html=True,
     )
     st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
