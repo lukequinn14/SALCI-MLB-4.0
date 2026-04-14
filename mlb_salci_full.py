@@ -1764,6 +1764,17 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     _, home_emoji, _ = get_rating(home_salci)
     _, away_emoji, _ = get_rating(away_salci)
 
+
+    # ── OUTER CARD CONTAINER ─────────────────────────────────────────────────
+    st.markdown("""
+    <div style='
+        background: #111827;
+        border-radius: 16px;
+        padding: 16px;
+        margin-bottom: 20px;
+        border: 1px solid #374151;
+    '>
+    """, unsafe_allow_html=True)
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(
         "<div style='background:linear-gradient(135deg,#1e3a5f,#2e5a8f);"
@@ -1783,7 +1794,12 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     with col_away:
         # border-open div
         st.markdown(
-            "<div style='border:1px solid #374151;border-radius:10px;"
+            <div style='
+                border:1px solid #374151;
+                border-radius:12px;
+                padding:14px;
+                background: linear-gradient(145deg, #1f2937, #111827);
+            '>
             "padding:12px 14px;margin-bottom:4px;'>",
             unsafe_allow_html=True,
         )
@@ -1884,33 +1900,30 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     # ════════════════════════════════════════════════════════════════════════
     with col_vs:
         st.markdown(
-            f"<div style='border:1.5px solid {edge_color};border-radius:12px;"
-            f"padding:16px 10px;text-align:center;'>",
-            unsafe_allow_html=True,
+            f"""
+            <div style='
+                text-align:center;
+                padding-top:20px;
+                padding-bottom:20px;
+            '>
+                <div style='font-size:0.8rem; color:#9ca3af;'>MATCHUP EDGE</div>
+                <div style='font-size:1.4rem; font-weight:bold; color:{edge_color};'>
+                    {edge_label}
+                </div>
+                <div style='font-size:0.9rem; color:#d1d5db; margin-top:4px;'>
+                    Δ {delta:.1f}
+                </div>
+    
+                <div style='margin-top:12px;'>
+                    <div style='font-size:0.7rem; color:#9ca3af;'>CONFIDENCE</div>
+                    <div style='font-size:1rem; font-weight:bold; color:white;'>
+                        {confidence}%
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
-        st.markdown(
-            f"<div style='font-size:1.2rem;font-weight:900;color:{edge_color};"
-            f"line-height:1.3;margin-bottom:8px;'>{edge_label}</div>"
-            f"<div style='font-size:0.75rem;color:#9ca3af;margin-bottom:4px;'>SALCI differential</div>"
-            f"<div style='font-size:2rem;font-weight:800;color:{edge_color};"
-            f"margin-bottom:12px;'>{abs(delta):.1f}</div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"<div style='font-size:0.65rem;color:#9ca3af;margin-bottom:4px;'>Confidence</div>"
-            f"<div style='background:#e5e7eb;border-radius:6px;height:8px;'>"
-            f"<div style='width:{confidence}%;background:{edge_color};"
-            f"border-radius:6px;height:100%;'></div></div>"
-            f"<div style='font-size:0.8rem;font-weight:700;color:{edge_color};"
-            f"margin-top:4px;'>{confidence}%</div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<div style='font-size:0.65rem;color:#6b7280;margin-top:10px;line-height:1.5;'>"
-            "Based on SALCI scores<br>and component analysis</div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════
     # HOME pitcher panel
@@ -1918,7 +1931,12 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     with col_home:
         # border-open div
         st.markdown(
-            "<div style='border:1px solid #374151;border-radius:10px;"
+            <div style='
+                border:1px solid #374151;
+                border-radius:12px;
+                padding:14px;
+                background: linear-gradient(145deg, #1f2937, #111827);
+            '>
             "padding:12px 14px;margin-bottom:4px;'>",
             unsafe_allow_html=True,
         )
@@ -2026,6 +2044,9 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         unsafe_allow_html=True,
     )
     st.markdown("---")
+
+    # ── CLOSE CARD ───────────────────────────────────────────────────────────
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_compact_summary(pitcher_results: List[Dict]):
