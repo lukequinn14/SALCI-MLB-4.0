@@ -2544,6 +2544,77 @@ def main():
                 except Exception as e:
                     st.warning(f"SALCI v4 error for {pitcher}: {e}")
                     pass
+
+            # ── SMART PROXY PATH ──────────────────────────────────────────────
+            # When pybaseball/Statcast unavailable, build calibrated proxy scores
+            # from MLB Stats API metrics and run them through the SAME v4 engine.
+            # This replaces the old v1 fallback which was capped at ~65.
+            if salci_v3_result is None and SALCI_V3_AVAILABLE and combined_stats:
+                try:
+                    k9    = combined_stats.get('K9',        9.0)
+                    k_pct = combined_stats.get('K_percent', 0.22)
+                    k_bb  = combined_stats.get('K/BB',      2.5)
+                    p_ip  = combined_stats.get('P/IP',     16.0)
+                    avg_ip = (p_recent or {}).get('avg_ip_per_start', 5.5)
+
+                    # ── Stuff+ proxy (recalibrated for v4) ───────────────────
+                    # Anchors: K9=9.0 → 100, K9=12.0 → 115, K9=6.5 → 85
+                    # Uses BOTH K9 and K% for a better composite signal
+                    k9_z    = (k9    - 9.0)  / 1.8    # 1 std dev in MLB ≈ 1.8 K/9
+                    kpct_z  = (k_pct - 0.22) / 0.045  # 1 std dev ≈ 4.5%
+                    stuff_proxy_z = k9_z * 0.60 + kpct_z * 0.40
+                    stuff_score   = round(100 + stuff_proxy_z * 10, 1)
+                    stuff_score   = max(72, min(140, stuff_score))
+
+                    # ── Location+ proxy ───────────────────────────────────────
+                    # K/BB is the best command proxy from Stats API
+                    # Anchors: K/BB=2.5 → 100, K/BB=4.5 → 108, K/BB=1.5 → 94
+                    kbb_z          = (k_bb - 2.5) / 1.2
+                    location_score = round(100 + kbb_z * 7, 1)  # narrower — loc matters less
+                    location_score = max(82, min(118, location_score))
+
+                    # ── Workload ─────────────────────────────────────────────
+                    w_stats = {'P/IP': p_ip, 'avg_ip': avg_ip}
+                    workload_score, _ = calculate_workload_score_v3(w_stats)
+
+                    # ── Matchup ───────────────────────────────────────────────
+                    # FIX: Use 50 (true neutral) as default when no lineup/opp data
+                    # The old code passed league-avg OppK%=0.22 which z-scored to 40!
+                    if opp_stats:
+                        # We have team-level opponent data — use it
+                        opp_lineup_info = game_lineups[opp_side]
+                        lineup_hitter_stats = None
+                        if opp_lineup_info.get('lineup'):
+                            lineup_hitter_stats = []
+                            for player in opp_lineup_info['lineup']:
+                                h_recent = get_hitter_recent_stats(player['id'], 7)
+                                if h_recent:
+                                    lineup_hitter_stats.append({
+                                        'name': player['name'],
+                                        'k_rate': h_recent.get('k_rate', 0.22),
+                                        'zone_contact_pct': 1 - h_recent.get('k_rate', 0.22) * 0.8,
+                                        'bat_side': player.get('bat_side', 'R')
+                                    })
+                        matchup_score, _ = calculate_matchup_score_v3(
+                            opp_stats, lineup_hitter_stats, pitcher_hand
+                        )
+                    else:
+                        matchup_score = 50.0  # true neutral — no penalty for unknown
+
+                    profile_type = (
+                        "STUFF-DOMINANT" if stuff_score >= 110 and location_score < 102 else
+                        "BALANCED-PLUS"  if stuff_score >= 105 and location_score >= 105 else
+                        "BALANCED"
+                    )
+
+                    salci_v3_result = calculate_salci_v3(
+                        stuff_score, location_score, matchup_score, workload_score
+                    )
+                    salci_grade = salci_v3_result.get('grade', 'C')
+                    is_statcast = False  # proxy, not real Statcast
+
+                except Exception as e:
+                    pass  # falls through to v1 legacy below
             
             # Fallback to SALCI v1
             if salci_v3_result:
