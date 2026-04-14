@@ -534,6 +534,7 @@ def calculate_matchup_score_v3(
 
     # --- Z-scores (v4: wider std bands for more separation) ---
     # Opp K%: higher = better for pitcher
+    # Center at league avg (0.22) → z=0 → matchup score = 50 (true neutral)
     k_z = (opp_k_pct - 0.22) / 0.025      # was /0.03 — tighter std → more z
     k_z = max(-3.0, min(3.0, k_z))        # wider clamp than v3's ±2
 
