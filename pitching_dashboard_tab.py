@@ -458,9 +458,8 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
             # Push tick labels right to leave room for logo
             ticklabelposition = "outside right",
         ),
-        margin      = dict(l=80, r=60, t=48, b=20),
         showlegend  = False,
-        **_base_layout(),
+        **_base_layout(margin=dict(l=80, r=60, t=48, b=20)),
     )
     return fig
 
