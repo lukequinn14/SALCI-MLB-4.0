@@ -2383,7 +2383,6 @@ def main():
     
     st.success(f"Found **{len(games)} games** for {selected_date.strftime('%A, %B %d, %Y')}")
 
-    games = get_games_by_date(selected_date)
     # Check lineup confirmation
     lineup_status = {}
     for game in games:
@@ -2432,6 +2431,90 @@ def main():
             else:
                 st.warning(_msg)
             _precomputed_loaded = True
+
+            # ── BUG FIX: Reconcile stale lineup_confirmed with live lineup_status ──
+            # The pre-computed JSON was built before lineups dropped (Stage 1 nightly).
+            # We must patch each pitcher result with the *current* confirmed status
+            # from lineup_status, which was freshly fetched from the MLB API above.
+            #
+            # We also opportunistically upgrade the matchup_score to lineup-aware
+            # individual hitter stats if the lineup is now confirmed.
+            for result in all_pitcher_results:
+                game_pk = result.get("game_pk")
+                if game_pk is None:
+                    continue
+                game_status = lineup_status.get(game_pk)
+                if game_status is None:
+                    continue
+
+                # Determine which side is the opponent for this pitcher's team
+                # result["team"] is the pitcher's team name; we need the opp side
+                game_obj = next((g for g in games if g["game_pk"] == game_pk), None)
+                if game_obj is None:
+                    continue
+
+                if result.get("team") == game_obj.get("home_team"):
+                    opp_side = "away"
+                else:
+                    opp_side = "home"
+
+                opp_lineup_info = game_status[opp_side]
+                now_confirmed = opp_lineup_info["confirmed"]
+                was_confirmed = result.get("lineup_confirmed", False)
+
+                # Always patch with the live value
+                result["lineup_confirmed"] = now_confirmed
+
+                # If lineup just became confirmed, upgrade matchup score in-place
+                if now_confirmed and not was_confirmed and SALCI_V3_AVAILABLE:
+                    try:
+                        lineup = opp_lineup_info.get("lineup", [])
+                        if lineup:
+                            lineup_hitter_stats = []
+                            for player in lineup:
+                                h_recent = get_hitter_recent_stats(player["id"], 7)
+                                if h_recent:
+                                    lineup_hitter_stats.append({
+                                        "name": player["name"],
+                                        "k_rate": h_recent.get("k_rate", 0.22),
+                                        "zone_contact_pct": 1 - h_recent.get("k_rate", 0.22) * 0.8,
+                                        "bat_side": player.get("bat_side", "R"),
+                                    })
+                            if len(lineup_hitter_stats) >= 5:
+                                opp_id = result.get("opponent_id")
+                                opp_recent = get_team_batting_stats(opp_id, 14) if opp_id else None
+                                opp_baseline = get_team_season_batting(opp_id, current_season) if opp_id else None
+                                opp_stats = {}
+                                if opp_recent:
+                                    opp_stats.update(opp_recent)
+                                if opp_baseline:
+                                    for key in ["OppK%", "OppContact%"]:
+                                        if key in opp_baseline and key in opp_stats:
+                                            opp_stats[key] = opp_stats[key] * 0.6 + opp_baseline[key] * 0.4
+                                        elif key in opp_baseline:
+                                            opp_stats[key] = opp_baseline[key]
+                                new_matchup, _ = calculate_matchup_score_v3(
+                                    opp_stats, lineup_hitter_stats, result.get("pitcher_hand", "R")
+                                )
+                                result["matchup_score"] = new_matchup
+                                # Recompute SALCI with updated matchup
+                                new_salci_result = calculate_salci_v3(
+                                    result.get("stuff_score", 100),
+                                    result.get("location_score", 100),
+                                    new_matchup,
+                                    result.get("workload_score", 50),
+                                )
+                                result["salci"] = new_salci_result["salci"]
+                                result["salci_grade"] = new_salci_result.get("grade", result["salci_grade"])
+                                avg_ip = result.get("projected_ip", 5.5)
+                                proj = calculate_expected_ks_v3(new_salci_result, avg_ip)
+                                result["expected"] = proj.get("expected", result["expected"])
+                                result["k_lines"] = proj.get("k_lines", result.get("k_lines", {}))
+                                result["lines"] = result["k_lines"]
+                                result["floor"] = proj.get("floor", result.get("floor", 4))
+                                result["floor_confidence"] = proj.get("floor_confidence", result.get("floor_confidence", 70))
+                    except Exception as _patch_err:
+                        pass  # Silently fall back to pre-computed values
 
     if not _precomputed_loaded:
         if DATA_LOADER_AVAILABLE:
