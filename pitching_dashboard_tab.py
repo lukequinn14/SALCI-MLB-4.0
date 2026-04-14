@@ -56,12 +56,18 @@ SLATE  = "rgba(148,163,184,0.15)"   # subtle grid lines
 TEXT   = "#e2e8f0"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEAM LOGOS  (ESPN CDN — reliable PNG, 500px, no auth required)
-# Matches the same helper used in team_pitching_stats.py.
-# team_pitching_stats.get_team_logo_url() is the canonical source;
-# this local map is a fast zero-import fallback.
+# TEAM LOGOS  — dual-CDN with inline fallback
+#
+# Primary:  ESPN CDN  (500px PNG, reliable from browsers)
+# Fallback: MLB static CDN (SVG via numeric team ID — always works)
+#
+# The onerror= attribute on every <img> swaps to the MLB fallback automatically
+# if ESPN blocks the request (e.g. Streamlit Cloud CORS / hotlink protection).
 # ─────────────────────────────────────────────────────────────────────────────
 _ESPN_BASE = "https://a.espncdn.com/i/teamlogos/mlb/500"
+_MLB_BASE  = "https://www.mlbstatic.com/team-logos"
+
+# Primary ESPN URLs
 TEAM_LOGOS: Dict[str, str] = {
     "ARI": f"{_ESPN_BASE}/ari.png", "ATL": f"{_ESPN_BASE}/atl.png",
     "BAL": f"{_ESPN_BASE}/bal.png", "BOS": f"{_ESPN_BASE}/bos.png",
@@ -78,6 +84,25 @@ TEAM_LOGOS: Dict[str, str] = {
     "SEA": f"{_ESPN_BASE}/sea.png", "STL": f"{_ESPN_BASE}/stl.png",
     "TB":  f"{_ESPN_BASE}/tb.png",  "TEX": f"{_ESPN_BASE}/tex.png",
     "TOR": f"{_ESPN_BASE}/tor.png", "WSH": f"{_ESPN_BASE}/wsh.png",
+}
+
+# Fallback: MLB official static CDN (numeric team IDs, SVG, very reliable)
+MLB_FALLBACK_LOGOS: Dict[str, str] = {
+    "ARI": f"{_MLB_BASE}/109.svg", "ATL": f"{_MLB_BASE}/144.svg",
+    "BAL": f"{_MLB_BASE}/110.svg", "BOS": f"{_MLB_BASE}/111.svg",
+    "CHC": f"{_MLB_BASE}/112.svg", "CWS": f"{_MLB_BASE}/113.svg",
+    "CIN": f"{_MLB_BASE}/114.svg", "CLE": f"{_MLB_BASE}/115.svg",
+    "COL": f"{_MLB_BASE}/116.svg", "DET": f"{_MLB_BASE}/117.svg",
+    "HOU": f"{_MLB_BASE}/118.svg", "KC":  f"{_MLB_BASE}/119.svg",
+    "LAA": f"{_MLB_BASE}/108.svg", "LAD": f"{_MLB_BASE}/119.svg",
+    "MIA": f"{_MLB_BASE}/146.svg", "MIL": f"{_MLB_BASE}/158.svg",
+    "MIN": f"{_MLB_BASE}/142.svg", "NYM": f"{_MLB_BASE}/121.svg",
+    "NYY": f"{_MLB_BASE}/147.svg", "OAK": f"{_MLB_BASE}/133.svg",
+    "PHI": f"{_MLB_BASE}/143.svg", "PIT": f"{_MLB_BASE}/134.svg",
+    "SD":  f"{_MLB_BASE}/135.svg", "SF":  f"{_MLB_BASE}/137.svg",
+    "SEA": f"{_MLB_BASE}/136.svg", "STL": f"{_MLB_BASE}/138.svg",
+    "TB":  f"{_MLB_BASE}/139.svg", "TEX": f"{_MLB_BASE}/140.svg",
+    "TOR": f"{_MLB_BASE}/141.svg", "WSH": f"{_MLB_BASE}/120.svg",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,18 +278,23 @@ def _load_data(season: int) -> List[Dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _base_layout(**kw) -> dict:
-    """Shared Plotly layout — dark-mode, transparent, SALCI brand."""
-    return dict(
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="'SF Pro Display', 'Helvetica Neue', sans-serif",
-                  size=12, color=TEXT),
-        margin=dict(l=10, r=40, t=44, b=16),
-        hoverlabel=dict(bgcolor="rgba(15,23,42,0.95)",
-                        bordercolor="rgba(148,163,184,0.3)",
-                        font_color=TEXT, font_size=12),
-        **kw,
+    """
+    Shared Plotly layout — dark-mode, transparent, SALCI brand.
+    Any key passed as **kw overrides the default.  Callers that need
+    a custom margin should pass margin=dict(...) here, not separately.
+    """
+    defaults = dict(
+        plot_bgcolor  = "rgba(0,0,0,0)",
+        paper_bgcolor = "rgba(0,0,0,0)",
+        font          = dict(family="'SF Pro Display', 'Helvetica Neue', sans-serif",
+                             size=12, color=TEXT),
+        margin        = dict(l=10, r=40, t=44, b=16),
+        hoverlabel    = dict(bgcolor="rgba(15,23,42,0.95)",
+                             bordercolor="rgba(148,163,184,0.3)",
+                             font_color=TEXT, font_size=12),
     )
+    defaults.update(kw)   # kw wins — no duplicate key error possible
+    return defaults
 
 
 def _fmt(val, key: str) -> str:
@@ -282,13 +312,21 @@ def _valid(data: List[Dict], key: str) -> List[Dict]:
 
 
 def _logo_html(team: str, size: int = 28) -> str:
-    url = TEAM_LOGOS.get(team, "")
+    """<img> with ESPN primary + MLB static fallback on onerror."""
+    url      = TEAM_LOGOS.get(team, "")
+    fallback = MLB_FALLBACK_LOGOS.get(team, "")
+    if not url and not fallback:
+        return "<span style='font-size:0.75rem;color:#64748b;font-weight:700'>" + team + "</span>"
     if not url:
-        return f"<span style='font-size:0.75rem;color:#64748b'>{team}</span>"
+        url, fallback = fallback, ""
+    if fallback:
+        onerror = "this.src='" + fallback + "';this.onerror=null;"
+    else:
+        onerror = "this.style.display='none';"
     return (
-        f'<img src="{url}" width="{size}" height="{size}" '
-        f'style="vertical-align:middle;object-fit:contain;" '
-        f'alt="{team}" onerror="this.style.display=\'none\'">'
+        '<img src="' + url + '" width="' + str(size) + '" height="' + str(size) + '" '
+        'style="vertical-align:middle;object-fit:contain;" '
+        'alt="' + team + '" onerror="' + onerror + '">'
     )
 
 
@@ -774,13 +812,16 @@ def _render_top_performers(data: List[Dict]) -> None:
         era  = team["starter_era"]
         logo = TEAM_LOGOS.get(abbr, "")
         with cols[i]:
+            fb   = MLB_FALLBACK_LOGOS.get(abbr, "")
+            oerr = ("this.src='" + fb + "';this.onerror=null;") if fb else "this.style.display='none';"
+            img  = ('<img src="' + logo + '" width="40" height="40" style="object-fit:contain;" onerror="' + oerr + '">') if logo else ""
             st.markdown(
-                f'<div class="perf-card">'
-                f'{"<img src=" + chr(34) + logo + chr(34) + " width=40 height=40 style=object-fit:contain>" if logo else ""}'
-                f'<div class="team-abbr">{abbr}</div>'
-                f'<div class="stat-val">{era:.2f}</div>'
-                f'<div class="stat-lbl">SP ERA</div>'
-                f'</div>',
+                '<div class="perf-card">'
+                + img
+                + '<div class="team-abbr">' + abbr + '</div>'
+                + '<div class="stat-val">' + f"{era:.2f}" + '</div>'
+                + '<div class="stat-lbl">SP ERA</div>'
+                + '</div>',
                 unsafe_allow_html=True,
             )
 
@@ -960,17 +1001,18 @@ def _render_rankings_card(rows: List[Dict], stat_key: str, stat_label: str,
         val = d.get(stat_key)
         if val is None:
             continue
-        logo_url = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        logo_url  = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        card_fb   = MLB_FALLBACK_LOGOS.get(d["team"], "")
+        card_oerr = ("this.src='" + card_fb + "';this.onerror=null;") if card_fb else "this.style.display='none';"
         rank_badge = medal_emoji[i] if i < 3 else f"#{i+1}"
         bar_w  = _bar_pct(val)
         bar_cl = _bar_color(i)
         fmt_val = _fmt(val, stat_key)
 
         logo_html = (
-            f'<img src="{logo_url}" width="36" height="36" '
-            f'style="object-fit:contain;border-radius:4px;'
-            f'background:rgba(255,255,255,0.06);padding:2px;" '
-            f'onerror="this.style.display=\'none\'">'
+            '<img src="' + logo_url + '" width="36" height="36" '
+            'style="object-fit:contain;border-radius:4px;background:rgba(255,255,255,0.06);padding:2px;" '
+            'onerror="' + card_oerr + '">'
         ) if logo_url else ""
 
         rows_html += f"""
