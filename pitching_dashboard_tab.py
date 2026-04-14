@@ -339,12 +339,21 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHART: Rankings bar
+# CHART: Rankings  (logo-native horizontal bars)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def chart_rankings(data: List[Dict], stat_key: str, label: str,
                    lower_is_better: bool, n: int,
                    best_first: bool) -> Optional[go.Figure]:
+    """
+    Horizontal bar chart where each y-axis tick IS the team logo.
+
+    How logos work in Plotly:
+      - We blank out the y-axis tick labels (replaced by logo images).
+      - Each team gets a go.layout.Image placed at its bar's y-position,
+        anchored to the left edge of the plot area (x=0 in paper coords).
+      - Logo size is fixed at ~32px regardless of chart height.
+    """
     rows = _valid(data, stat_key)
     if not rows:
         return None
@@ -355,29 +364,102 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
 
     teams  = [d["team"]   for d in subset]
     values = [d[stat_key] for d in subset]
-    colors = (
-        [TEAL if i < 3 else "#5DCAA5" for i in range(len(subset))]
-        if best_first
-        else [CORAL if i < 3 else "#F0997B" for i in range(len(subset))]
-    )
+    logos  = [d.get("logo_url") or TEAM_LOGOS.get(d["team"], "") for d in subset]
+
+    # Medal colouring: gold / silver / bronze for top 3, then faded
+    medal   = ["#FFD700", "#C0C0C0", "#CD7F32"]
+    if best_first:
+        bar_colors = [
+            (medal[i] if i < 3 else "#3a7d6b")
+            for i in range(len(subset))
+        ]
+    else:
+        bar_colors = [
+            (medal[i] if i < 3 else "#8b3a1e")
+            for i in range(len(subset))
+        ]
+
     suffix = "%" if "pct" in stat_key else ""
-    title  = f"{'Best' if best_first else 'Worst'} {len(subset)} — {label}"
+    row_h  = 52          # px per row
+    height = max(400, len(subset) * row_h + 80)
 
     fig = go.Figure(go.Bar(
         y=teams, x=values, orientation="h",
-        marker=dict(color=colors, opacity=0.9),
-        text=[_fmt(v, stat_key) for v in values],
-        textposition="outside", textfont=dict(size=11, color=TEXT),
+        marker=dict(color=bar_colors, opacity=0.85,
+                    line=dict(color="rgba(255,255,255,0.06)", width=0.5)),
+        text=[f"  {_fmt(v, stat_key)}" for v in values],
+        textposition="outside",
+        textfont=dict(size=12, color=TEXT, family="'SF Mono','Fira Code',monospace"),
         hovertemplate=(
-            f"<b>%{{y}}</b><br>{label}: <b>%{{x:.2f}}{suffix}</b><extra></extra>"
+            f"<b>%{{y}}</b><br>"
+            f"{label}: <b>%{{x:.2f}}{suffix}</b>"
+            f"<extra></extra>"
         ),
+        # Invisible customdata for rank tooltip
+        customdata=list(range(1, len(subset) + 1)),
     ))
+
+    # ── Place logos as layout images ─────────────────────────────────────────
+    # Plotly layout images in 'paper' xref / 'y' yref allow us to pin an image
+    # to a specific data-y value, left-aligned at the plot edge.
+    images = []
+    for i, (team, logo_url) in enumerate(zip(teams, logos)):
+        if not logo_url:
+            continue
+        images.append(dict(
+            source   = logo_url,
+            xref     = "paper",
+            yref     = "y",
+            x        = -0.01,          # just left of the plot area
+            y        = team,           # data coordinate = team name
+            sizex    = 0.08,           # fraction of paper width (~32px at 400px)
+            sizey    = 0.75,           # fraction of row height in data units
+            xanchor  = "right",
+            yanchor  = "middle",
+            layer    = "above",
+        ))
+
+    # Rank medal annotations on the left of each bar
+    rank_annotations = []
+    for i, team in enumerate(teams):
+        rank_annotations.append(dict(
+            x         = 0,
+            y         = team,
+            xref      = "x",
+            yref      = "y",
+            text      = f"<b>#{i+1}</b>",
+            showarrow = False,
+            xanchor   = "right",
+            font      = dict(size=10,
+                             color=medal[i] if i < 3 else "rgba(148,163,184,0.6)"),
+            xshift    = -4,
+        ))
+
     fig.update_layout(
-        height=max(320, len(subset) * 44 + 80),
-        title=dict(text=title, font=dict(size=14, color=TEXT), x=0),
-        xaxis=dict(gridcolor=SLATE, zeroline=False),
-        yaxis=dict(autorange="reversed", tickfont=dict(size=12)),
-        showlegend=False,
+        height      = height,
+        images      = images,
+        annotations = rank_annotations,
+        title       = dict(
+            text = (
+                f"{'🏆 Best' if best_first else '⚠️ Worst'} {len(subset)} "
+                f"— {label}"
+            ),
+            font = dict(size=15, color=TEXT), x=0,
+        ),
+        xaxis = dict(
+            gridcolor  = SLATE,
+            zeroline   = False,
+            tickfont   = dict(size=11),
+            title      = dict(text=label, font=dict(size=11, color="#94a3b8")),
+        ),
+        yaxis = dict(
+            autorange  = "reversed",
+            tickfont   = dict(size=11, color=TEXT),
+            # Push tick labels right to leave room for logo
+            ticklabelposition = "outside right",
+        ),
+        margin      = dict(l=80, r=60, t=48, b=20),
+        showlegend  = False,
         **_base_layout(),
     )
     return fig
@@ -387,87 +469,141 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
 # CHART: K% vs ERA+ scatter
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHART: K% vs ERA scatter  (team logos instead of dots)
+# ─────────────────────────────────────────────────────────────────────────────
+
 def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
     """
-    K% vs ERA scatter (ERA used as y-axis since ERA+ is no longer sourced).
-    Lower ERA = better, so we invert the y-axis for intuitive reading.
-    Falls back to whiff% on y-axis if ERA unavailable.
+    K% (x) vs ERA (y, inverted) scatter where each point IS the team logo.
+
+    Technique:
+      - An invisible go.Scatter trace handles hover tooltips and click events.
+        Its markers are fully transparent (opacity=0).
+      - Each team gets a go.layout.Image pinned to its (k_pct, era) coordinate
+        in data-space (xref='x', yref='y'), sized in pixels via sizex/sizey.
+      - Quadrant shading via add_shape rectangles.
+      - Quadrant labels via add_annotation.
     """
-    # Prefer K% vs ERA (always available from MLB API)
     rows = [d for d in data
             if d.get("k_pct") is not None and d.get("era") is not None]
     if len(rows) < 2:
         return None
 
-    avg_k  = sum(d["k_pct"] for d in rows) / len(rows)
-    avg_er = sum(d["era"]   for d in rows) / len(rows)
-
-    def _color(d: Dict) -> str:
-        high_k    = d["k_pct"] >= avg_k
-        low_era   = d["era"]   <= avg_er   # lower ERA = better
-        if high_k and low_era:
-            return TEAL      # elite: lots of Ks, low ERA
-        if not high_k and not low_era:
-            return CORAL     # struggling
-        return BLUE          # mixed
-
-    colors = [_color(d) for d in rows]
-
-    fig = go.Figure()
-
-    fig.add_vline(x=avg_k,  line_dash="dot",
-                  line_color="rgba(148,163,184,0.30)", line_width=1)
-    fig.add_hline(y=avg_er, line_dash="dot",
-                  line_color="rgba(148,163,184,0.30)", line_width=1)
-
     k_vals  = [d["k_pct"] for d in rows]
     er_vals = [d["era"]   for d in rows]
-    pad_k   = (max(k_vals) - min(k_vals)) * 0.08
-    pad_er  = (max(er_vals) - min(er_vals)) * 0.10
+    avg_k   = sum(k_vals)  / len(k_vals)
+    avg_er  = sum(er_vals) / len(er_vals)
 
-    label_cfg = dict(font_size=9, showarrow=False,
-                     font_color="rgba(148,163,184,0.55)")
-    fig.add_annotation(x=max(k_vals), y=min(er_vals),
-                        text="⭐ Elite (high K, low ERA)",
-                        xanchor="right", yanchor="bottom", **label_cfg)
-    fig.add_annotation(x=min(k_vals), y=min(er_vals),
-                        text="Lucky / contact suppression",
-                        xanchor="left", yanchor="bottom", **label_cfg)
-    fig.add_annotation(x=max(k_vals), y=max(er_vals),
-                        text="Strikeouts but giving up runs",
-                        xanchor="right", yanchor="top", **label_cfg)
-    fig.add_annotation(x=min(k_vals), y=max(er_vals),
-                        text="⚠️ Struggling",
-                        xanchor="left", yanchor="top", **label_cfg)
+    pad_k  = (max(k_vals)  - min(k_vals))  * 0.14
+    pad_er = (max(er_vals) - min(er_vals)) * 0.18
+
+    x_min = min(k_vals)  - pad_k
+    x_max = max(k_vals)  + pad_k
+    y_min = min(er_vals) - pad_er   # best ERA (visually at top because axis inverted)
+    y_max = max(er_vals) + pad_er   # worst ERA (visually at bottom)
+
+    # ── Quadrant background shading ──────────────────────────────────────────
+    # NB: y-axis is INVERTED (low ERA = top = good), so:
+    #   "elite" quadrant = right half, upper half visually = right, low ERA
+    quad_shapes = [
+        # Top-right visually = high K, low ERA = elite (teal tint)
+        dict(type="rect", xref="x", yref="y",
+             x0=avg_k, x1=x_max, y0=y_min, y1=avg_er,
+             fillcolor="rgba(29,158,117,0.07)", line_width=0, layer="below"),
+        # Bottom-left visually = low K, high ERA = struggling (coral tint)
+        dict(type="rect", xref="x", yref="y",
+             x0=x_min, x1=avg_k, y0=avg_er, y1=y_max,
+             fillcolor="rgba(216,90,48,0.07)", line_width=0, layer="below"),
+    ]
+
+    # ── Invisible scatter trace for hover/tooltip ────────────────────────────
+    fig = go.Figure()
+
+    for shape in quad_shapes:
+        fig.add_shape(**shape)
+
+    # Cross-hair lines
+    fig.add_vline(x=avg_k,  line_dash="dot",
+                  line_color="rgba(148,163,184,0.25)", line_width=1)
+    fig.add_hline(y=avg_er, line_dash="dot",
+                  line_color="rgba(148,163,184,0.25)", line_width=1)
 
     fig.add_trace(go.Scatter(
-        x=k_vals,
-        y=er_vals,
-        mode="markers+text",
-        text=[d["team"] for d in rows],
-        textposition="top center",
-        textfont=dict(size=10, color=TEXT),
-        marker=dict(color=colors, size=11,
-                    line=dict(color="rgba(255,255,255,0.25)", width=1)),
+        x       = k_vals,
+        y       = er_vals,
+        mode    = "markers",
+        marker  = dict(size=30, opacity=0, color="rgba(0,0,0,0)"),
+        text    = [d["team"] for d in rows],
+        customdata = [[d["team"], d["k_pct"], d["era"],
+                       d.get("fip", "—"), d.get("whiff_pct", "—")]
+                      for d in rows],
         hovertemplate=(
-            "<b>%{text}</b><br>"
-            "K%%: <b>%{x:.1f}%%</b><br>"
-            "ERA: <b>%{y:.2f}</b>"
+            "<b>%{customdata[0]}</b><br>"
+            "K%%: <b>%{customdata[1]:.1f}%%</b><br>"
+            "ERA: <b>%{customdata[2]:.2f}</b><br>"
+            "FIP: <b>%{customdata[3]}</b><br>"
+            "Whiff%%: <b>%{customdata[4]}</b>"
             "<extra></extra>"
         ),
+        showlegend = False,
     ))
 
+    # ── Logo images pinned to data coordinates ───────────────────────────────
+    # sizex / sizey are in data units. We compute a fixed logo size as a
+    # fraction of the axis range so logos don't overlap at default zoom.
+    logo_w = (x_max - x_min) * 0.055   # ~5.5% of x-range
+    logo_h = (y_max - y_min) * 0.12    # ~12% of y-range (ERA axis)
+
+    images = []
+    for d in rows:
+        logo = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        if not logo:
+            continue
+        images.append(dict(
+            source  = logo,
+            xref    = "x",
+            yref    = "y",
+            x       = d["k_pct"],
+            y       = d["era"],
+            sizex   = logo_w,
+            sizey   = logo_h,
+            xanchor = "center",
+            yanchor = "middle",
+            layer   = "above",
+        ))
+
+    # ── Quadrant label annotations ───────────────────────────────────────────
+    ann_cfg = dict(showarrow=False, font_size=9,
+                   font_color="rgba(148,163,184,0.60)")
+    annotations = [
+        dict(x=x_max - pad_k*0.3, y=y_min + pad_er*0.4,
+             text="⭐ Elite", xanchor="right", yanchor="bottom", **ann_cfg),
+        dict(x=x_min + pad_k*0.3, y=y_min + pad_er*0.4,
+             text="Low K / Low ERA", xanchor="left", yanchor="bottom", **ann_cfg),
+        dict(x=x_max - pad_k*0.3, y=y_max - pad_er*0.4,
+             text="High K / High ERA", xanchor="right", yanchor="top", **ann_cfg),
+        dict(x=x_min + pad_k*0.3, y=y_max - pad_er*0.4,
+             text="⚠️ Struggling", xanchor="left", yanchor="top", **ann_cfg),
+    ]
+
     fig.update_layout(
-        height=490,
-        title=dict(text="K% vs ERA — Dominance Quadrant",
-                   font=dict(size=15, color=TEXT), x=0),
-        xaxis=dict(title="Team K%  (MLB API / Savant)",
-                   tickformat=".1f", ticksuffix="%",
-                   range=[min(k_vals) - pad_k, max(k_vals) + pad_k],
-                   gridcolor=SLATE, zeroline=False),
-        yaxis=dict(title="Team ERA  (lower = better)",
-                   range=[max(er_vals) + pad_er, min(er_vals) - pad_er],  # inverted
-                   gridcolor=SLATE, zeroline=False),
+        height      = 540,
+        images      = images,
+        annotations = annotations,
+        title       = dict(text="K% vs ERA — Dominance Quadrant  (hover for full stats)",
+                           font=dict(size=15, color=TEXT), x=0),
+        xaxis = dict(
+            title      = "Team K%",
+            tickformat = ".1f", ticksuffix="%",
+            range      = [x_min, x_max],
+            gridcolor  = SLATE, zeroline=False,
+        ),
+        yaxis = dict(
+            title  = "Team ERA  ↑ better",
+            range  = [y_max, y_min],   # inverted: low ERA at top
+            gridcolor = SLATE, zeroline=False,
+        ),
         **_base_layout(),
     )
     return fig
@@ -775,6 +911,144 @@ def _render_data_table(data: List[Dict]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SHAREABLE RANKINGS CARD
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_rankings_card(rows: List[Dict], stat_key: str, stat_label: str,
+                           best_first: bool, season: int) -> None:
+    """
+    Renders a screenshot-ready HTML card — dark background, team logos,
+    medal colouring, SALCI branding. No external dependencies beyond st.markdown.
+
+    Design: vertical stack of rows, each row = rank medal + logo + team name
+    + stat value + a proportional bar.
+    """
+    if not rows:
+        return
+
+    values = [d.get(stat_key) for d in rows if d.get(stat_key) is not None]
+    if not values:
+        return
+
+    val_max = max(values)
+    val_min = min(values)
+    val_range = val_max - val_min or 1
+
+    medal_emoji = ["🥇", "🥈", "🥉"]
+    direction_label = "Best" if best_first else "Worst"
+    suffix = "%" if "pct" in stat_key else ""
+
+    def _bar_pct(v):
+        # Bars show relative magnitude. For lower-is-better stats, invert.
+        if val_range == 0:
+            return 60
+        if best_first:  # lower is better → shorter bar = worse
+            return max(8, int((1 - (v - val_min) / val_range) * 88 + 12))
+        else:           # higher is better → longer bar = worse
+            return max(8, int((v - val_min) / val_range * 88 + 12))
+
+    bar_color_good = "#1D9E75"
+    bar_color_ok   = "#378ADD"
+    bar_color_warn = "#D85A30"
+
+    def _bar_color(i):
+        if i < 3:
+            return bar_color_good if best_first else bar_color_warn
+        return bar_color_ok
+
+    rows_html = ""
+    for i, d in enumerate(rows):
+        val = d.get(stat_key)
+        if val is None:
+            continue
+        logo_url = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        rank_badge = medal_emoji[i] if i < 3 else f"#{i+1}"
+        bar_w  = _bar_pct(val)
+        bar_cl = _bar_color(i)
+        fmt_val = _fmt(val, stat_key)
+
+        logo_html = (
+            f'<img src="{logo_url}" width="36" height="36" '
+            f'style="object-fit:contain;border-radius:4px;'
+            f'background:rgba(255,255,255,0.06);padding:2px;" '
+            f'onerror="this.style.display=\'none\'">'
+        ) if logo_url else ""
+
+        rows_html += f"""
+        <div style="display:flex;align-items:center;gap:10px;
+                    padding:7px 14px;border-radius:8px;
+                    background:{'rgba(29,158,117,0.10)' if i < 3 else 'rgba(255,255,255,0.03)'};
+                    margin-bottom:4px;">
+          <!-- rank -->
+          <div style="font-size:1.1rem;min-width:28px;text-align:center">{rank_badge}</div>
+          <!-- logo -->
+          <div style="min-width:40px;display:flex;align-items:center;justify-content:center">
+            {logo_html}
+          </div>
+          <!-- team name -->
+          <div style="min-width:36px;font-size:0.82rem;font-weight:700;
+                      letter-spacing:0.8px;color:#e2e8f0;text-transform:uppercase">
+            {d["team"]}
+          </div>
+          <!-- bar -->
+          <div style="flex:1;background:rgba(148,163,184,0.08);
+                      border-radius:4px;height:8px;overflow:hidden">
+            <div style="width:{bar_w}%;height:100%;
+                        background:{bar_cl};border-radius:4px;
+                        box-shadow:0 0 6px {bar_cl}88;
+                        transition:width 0.3s ease"></div>
+          </div>
+          <!-- value -->
+          <div style="min-width:52px;text-align:right;font-size:1.05rem;
+                      font-weight:800;font-family:'SF Mono','Fira Code',monospace;
+                      color:{'#34d399' if i==0 else '#e2e8f0'}">
+            {fmt_val}
+          </div>
+        </div>"""
+
+    card_html = f"""
+    <div style="
+        background: linear-gradient(145deg, #0f1a2e 0%, #0d1b2a 100%);
+        border: 1px solid rgba(29,158,117,0.30);
+        border-radius: 16px;
+        padding: 20px 18px 16px;
+        max-width: 580px;
+        font-family: 'SF Pro Display','Helvetica Neue',sans-serif;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    ">
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;
+                  margin-bottom:16px;padding-bottom:12px;
+                  border-bottom:1px solid rgba(148,163,184,0.12)">
+        <div>
+          <div style="font-size:0.68rem;letter-spacing:1.8px;color:#64748b;
+                      text-transform:uppercase;font-weight:600;margin-bottom:3px">
+            SALCI · {season} MLB SEASON
+          </div>
+          <div style="font-size:1.2rem;font-weight:800;color:#f1f5f9;
+                      letter-spacing:-0.3px">
+            {direction_label} {len(rows)} — {stat_label}
+          </div>
+        </div>
+        <div style="font-size:2rem">⚾</div>
+      </div>
+      <!-- Rows -->
+      {rows_html}
+      <!-- Footer -->
+      <div style="margin-top:12px;padding-top:10px;
+                  border-top:1px solid rgba(148,163,184,0.08);
+                  font-size:0.68rem;color:#475569;
+                  display:flex;justify-content:space-between">
+        <span>#SALCI #MLB</span>
+        <span>Data: MLB Stats API · Baseball Savant</span>
+      </div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+    st.caption("💡 Take a screenshot of this card to share on social media.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN RENDER FUNCTION
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -898,24 +1172,24 @@ def render_pitching_dashboard() -> None:
         if not rows_with_stat:
             st.info(f"No {stat_label} data available yet — requires Baseball Savant overlay.")
         else:
+            # ── Plotly chart (interactive, with logos) ────────────────────────
             fig = chart_rankings(rows_with_stat, stat_key, stat_label,
                                   lower_is_better, n, best_first)
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
+            # ── Shareable card  ───────────────────────────────────────────────
             sorted_rows = sorted(rows_with_stat,
                                   key=lambda x: x[stat_key],
                                   reverse=not lower_is_better)
-            if sorted_rows:
-                top = sorted_rows[0]
-                bot = sorted_rows[-1]
-                st.info(
-                    f"📱 **Copy-paste caption:** "
-                    f"\"{season} {stat_label} — "
-                    f"Best: **{top['team']}** ({_fmt(top[stat_key], stat_key)})  "
-                    f"| Worst: **{bot['team']}** ({_fmt(bot[stat_key], stat_key)})  "
-                    f"#SALCI #MLB\""
-                )
+            subset_card = sorted_rows[:n] if best_first else sorted_rows[-n:]
+            if not best_first:
+                subset_card = list(reversed(subset_card))
+
+            with st.expander("📤 Shareable Card  (screenshot-ready)", expanded=False):
+                _render_rankings_card(subset_card, stat_key, stat_label,
+                                       best_first, season)
+
 
     # ── TAB 3: K% vs ERA+ ────────────────────────────────────────────────────
     with tab3:
