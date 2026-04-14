@@ -1,18 +1,31 @@
 """
-SALCI Pitching Dashboard Tab
-==============================
-Add to mlb_salci_full.py:
+SALCI Pitching Dashboard Tab  ·  v2.0
+======================================
+Drop-in replacement for the pitching tab.
 
+Usage in mlb_salci_full.py:
     try:
         from pitching_dashboard_tab import render_pitching_dashboard
         PITCHING_DASH_AVAILABLE = True
     except ImportError:
         PITCHING_DASH_AVAILABLE = False
 
-    # In your tabs:
     with tab8:
         if PITCHING_DASH_AVAILABLE:
             render_pitching_dashboard()
+
+Changes in v2.0
+---------------
+- Radio selector → st.tabs (persistent, navigable)
+- Team logos in header summary strip + full data table
+- FanGraphs connection status is a prominent banner, not a footnote
+- Every chart: improved titles, axis labels, hover templates
+- Quadrant labels on K% vs ERA+ scatter
+- FIP–ERA gap: callout cards for regression candidates
+- Dark-mode friendly: transparent plot backgrounds, subdued grids
+- Key Insights section at the top (expandable)
+- Data table: logo column rendered via HTML, colour-coded Source column
+- All st.metric calls augmented with delta context where meaningful
 """
 
 import streamlit as st
@@ -21,15 +34,208 @@ import plotly.graph_objects as go
 from datetime import datetime
 from typing import List, Dict, Optional
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PALETTE  (SALCI brand colours)
+# ─────────────────────────────────────────────────────────────────────────────
 TEAL   = "#1D9E75"
 CORAL  = "#D85A30"
 BLUE   = "#378ADD"
 AMBER  = "#BA7517"
 PURPLE = "#7F77DD"
+SLATE  = "rgba(148,163,184,0.15)"   # subtle grid lines
+TEXT   = "#e2e8f0"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TEAM LOGOS  (official MLB SVGs — scale perfectly at any size)
+# ─────────────────────────────────────────────────────────────────────────────
+TEAM_LOGOS: Dict[str, str] = {
+    "ARI": "https://www.mlbstatic.com/team-logos/109.svg",
+    "ATL": "https://www.mlbstatic.com/team-logos/144.svg",
+    "BAL": "https://www.mlbstatic.com/team-logos/110.svg",
+    "BOS": "https://www.mlbstatic.com/team-logos/111.svg",
+    "CHC": "https://www.mlbstatic.com/team-logos/112.svg",
+    "CWS": "https://www.mlbstatic.com/team-logos/113.svg",
+    "CIN": "https://www.mlbstatic.com/team-logos/114.svg",
+    "CLE": "https://www.mlbstatic.com/team-logos/115.svg",
+    "COL": "https://www.mlbstatic.com/team-logos/116.svg",
+    "DET": "https://www.mlbstatic.com/team-logos/117.svg",
+    "HOU": "https://www.mlbstatic.com/team-logos/118.svg",
+    "KC":  "https://www.mlbstatic.com/team-logos/119.svg",
+    "LAA": "https://www.mlbstatic.com/team-logos/120.svg",
+    "LAD": "https://www.mlbstatic.com/team-logos/121.svg",
+    "MIA": "https://www.mlbstatic.com/team-logos/122.svg",
+    "MIL": "https://www.mlbstatic.com/team-logos/123.svg",
+    "MIN": "https://www.mlbstatic.com/team-logos/124.svg",
+    "NYM": "https://www.mlbstatic.com/team-logos/125.svg",
+    "NYY": "https://www.mlbstatic.com/team-logos/126.svg",
+    "OAK": "https://www.mlbstatic.com/team-logos/127.svg",
+    "PHI": "https://www.mlbstatic.com/team-logos/128.svg",
+    "PIT": "https://www.mlbstatic.com/team-logos/129.svg",
+    "SD":  "https://www.mlbstatic.com/team-logos/130.svg",
+    "SF":  "https://www.mlbstatic.com/team-logos/131.svg",
+    "SEA": "https://www.mlbstatic.com/team-logos/132.svg",
+    "STL": "https://www.mlbstatic.com/team-logos/133.svg",
+    "TB":  "https://www.mlbstatic.com/team-logos/134.svg",
+    "TEX": "https://www.mlbstatic.com/team-logos/135.svg",
+    "TOR": "https://www.mlbstatic.com/team-logos/136.svg",
+    "WSH": "https://www.mlbstatic.com/team-logos/137.svg",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CUSTOM CSS  (injected once per render)
+# ─────────────────────────────────────────────────────────────────────────────
+_CSS = """
+<style>
+/* ── Dashboard header ─────────────────────────────────────── */
+.salci-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px;
+    border-radius: 12px;
+    background: linear-gradient(135deg,
+        rgba(29,158,117,0.18) 0%,
+        rgba(55,138,221,0.12) 100%);
+    border: 1px solid rgba(29,158,117,0.35);
+    margin-bottom: 6px;
+}
+.salci-header h2 {
+    margin: 0;
+    font-size: 1.55rem;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    color: #f1f5f9;
+}
+.salci-header p {
+    margin: 2px 0 0;
+    font-size: 0.83rem;
+    color: #94a3b8;
+}
+
+/* ── FanGraphs status banner ──────────────────────────────── */
+.fg-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    margin: 10px 0 4px;
+}
+.fg-banner.ok {
+    background: rgba(29,158,117,0.15);
+    border: 1px solid rgba(29,158,117,0.4);
+    color: #6ee7b7;
+}
+.fg-banner.warn {
+    background: rgba(186,117,23,0.15);
+    border: 1px solid rgba(186,117,23,0.4);
+    color: #fcd34d;
+}
+.fg-banner .icon { font-size: 1.3rem; }
+.fg-banner .label { font-size: 0.78rem; color: #94a3b8; font-weight: 400; }
+
+/* ── Top performers strip ─────────────────────────────────── */
+.perf-card {
+    background: rgba(30,41,59,0.7);
+    border: 1px solid rgba(148,163,184,0.12);
+    border-radius: 10px;
+    padding: 12px 10px 10px;
+    text-align: center;
+    transition: border-color 0.2s;
+}
+.perf-card:hover { border-color: rgba(29,158,117,0.5); }
+.perf-card .team-abbr {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    margin-top: 6px;
+    margin-bottom: 2px;
+}
+.perf-card .stat-val {
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: #1D9E75;
+    line-height: 1.1;
+}
+.perf-card .stat-lbl {
+    font-size: 0.72rem;
+    color: #64748b;
+    margin-top: 1px;
+}
+
+/* ── Insight cards ────────────────────────────────────────── */
+.insight-box {
+    background: rgba(15,23,42,0.6);
+    border-left: 3px solid;
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #cbd5e1;
+}
+.insight-box.green  { border-color: #1D9E75; }
+.insight-box.orange { border-color: #D85A30; }
+.insight-box.blue   { border-color: #378ADD; }
+
+/* ── Data table ───────────────────────────────────────────── */
+.salci-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.83rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.salci-table th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(148,163,184,0.2);
+    color: #64748b;
+    font-size: 0.75rem;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    font-weight: 600;
+    background: rgba(15,23,42,0.5);
+}
+.salci-table td {
+    padding: 7px 12px;
+    border-bottom: 1px solid rgba(148,163,184,0.07);
+    color: #e2e8f0;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.salci-table tr:hover td { background: rgba(29,158,117,0.06); }
+.salci-table td.good { color: #34d399; font-weight: 600; }
+.salci-table td.bad  { color: #f87171; font-weight: 600; }
+.salci-table .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+.salci-table .badge.fg   { background: rgba(29,158,117,0.2); color: #6ee7b7; }
+.salci-table .badge.mlb  { background: rgba(55,138,221,0.2); color: #93c5fd; }
+.salci-table .badge.miss { background: rgba(100,116,139,0.2); color: #94a3b8; }
+
+/* ── Section divider ──────────────────────────────────────── */
+.section-divider {
+    height: 1px;
+    background: linear-gradient(90deg,
+        rgba(29,158,117,0.4) 0%,
+        rgba(55,138,221,0.15) 50%,
+        transparent 100%);
+    margin: 18px 0;
+}
+</style>
+"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DATA
+# DATA LOADING
 # ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -39,7 +245,7 @@ def _load(season: int) -> List[Dict]:
 
 
 def _load_data(season: int) -> List[Dict]:
-    with st.spinner("Fetching live team pitching stats from FanGraphs + MLB API…"):
+    with st.spinner("🔄  Fetching live pitching data — FanGraphs + MLB API…"):
         return _load(season)
 
 
@@ -47,12 +253,17 @@ def _load_data(season: int) -> List[Dict]:
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _layout(**kw):
+def _base_layout(**kw) -> dict:
+    """Shared Plotly layout — dark-mode, transparent, SALCI brand."""
     return dict(
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(size=12),
-        margin=dict(l=10, r=30, t=30, b=10),
+        font=dict(family="'SF Pro Display', 'Helvetica Neue', sans-serif",
+                  size=12, color=TEXT),
+        margin=dict(l=10, r=40, t=44, b=16),
+        hoverlabel=dict(bgcolor="rgba(15,23,42,0.95)",
+                        bordercolor="rgba(148,163,184,0.3)",
+                        font_color=TEXT, font_size=12),
         **kw,
     )
 
@@ -63,21 +274,32 @@ def _fmt(val, key: str) -> str:
     if "pct" in key:
         return f"{val:.1f}%"
     if key == "era_plus":
-        return str(int(val))
+        return str(int(round(val)))
     return f"{val:.2f}"
 
 
 def _valid(data: List[Dict], key: str) -> List[Dict]:
-    """Return rows where key is a non-None number."""
     return [d for d in data if d.get(key) is not None]
 
 
+def _logo_html(team: str, size: int = 28) -> str:
+    url = TEAM_LOGOS.get(team, "")
+    if not url:
+        return f"<span style='font-size:0.75rem;color:#64748b'>{team}</span>"
+    return (
+        f'<img src="{url}" width="{size}" height="{size}" '
+        f'style="vertical-align:middle;object-fit:contain;" '
+        f'alt="{team}" onerror="this.style.display=\'none\'">'
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# CHARTS
+# CHART: Starter vs Bullpen ERA
 # ─────────────────────────────────────────────────────────────────────────────
 
-def chart_starter_bullpen(data: List[Dict]) -> go.Figure:
-    rows = [d for d in data if d.get("starter_era") is not None and d.get("bullpen_era") is not None]
+def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
+    rows = [d for d in data
+            if d.get("starter_era") is not None and d.get("bullpen_era") is not None]
     if not rows:
         return None
     rows = sorted(rows, key=lambda x: x["starter_era"])
@@ -89,27 +311,41 @@ def chart_starter_bullpen(data: List[Dict]) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Bar(
         y=teams, x=sp, name="Starter ERA", orientation="h",
-        marker_color=TEAL,
-        text=[f"{v:.2f}" for v in sp], textposition="outside", textfont=dict(size=10),
+        marker=dict(color=TEAL, opacity=0.88),
+        text=[f"{v:.2f}" for v in sp],
+        textposition="outside", textfont=dict(size=10, color=TEXT),
+        hovertemplate="<b>%{y}</b><br>Starter ERA: <b>%{x:.2f}</b><extra></extra>",
     ))
     fig.add_trace(go.Bar(
         y=teams, x=bp, name="Bullpen ERA", orientation="h",
-        marker_color=CORAL,
-        text=[f"{v:.2f}" for v in bp], textposition="outside", textfont=dict(size=10),
+        marker=dict(color=CORAL, opacity=0.88),
+        text=[f"{v:.2f}" for v in bp],
+        textposition="outside", textfont=dict(size=10, color=TEXT),
+        hovertemplate="<b>%{y}</b><br>Bullpen ERA: <b>%{x:.2f}</b><extra></extra>",
     ))
     fig.update_layout(
         barmode="group",
-        height=max(520, len(rows) * 22 + 80),
-        xaxis=dict(title="ERA", range=[1.5, 8.5], gridcolor="rgba(128,128,128,0.12)"),
+        height=max(560, len(rows) * 24 + 100),
+        title=dict(text="Starter ERA vs Bullpen ERA — All 30 Teams",
+                   font=dict(size=15, color=TEXT), x=0, pad=dict(b=6)),
+        xaxis=dict(title="ERA", range=[1.2, 9.0],
+                   gridcolor=SLATE, zeroline=False,
+                   tickfont=dict(size=11)),
         yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-        legend=dict(orientation="h", y=1.02, x=0),
-        **_layout(),
+        legend=dict(orientation="h", y=1.04, x=0,
+                    bgcolor="rgba(0,0,0,0)", borderwidth=0),
+        **_base_layout(),
     )
     return fig
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHART: Rankings bar
+# ─────────────────────────────────────────────────────────────────────────────
+
 def chart_rankings(data: List[Dict], stat_key: str, label: str,
-                   lower_is_better: bool, n: int, best_first: bool) -> go.Figure:
+                   lower_is_better: bool, n: int,
+                   best_first: bool) -> Optional[go.Figure]:
     rows = _valid(data, stat_key)
     if not rows:
         return None
@@ -118,50 +354,88 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
     if not best_first:
         subset = list(reversed(subset))
 
-    teams  = [d["team"]     for d in subset]
-    values = [d[stat_key]   for d in subset]
-    colors = [
-        (TEAL if i < 3 else "#5DCAA5") if best_first
-        else (CORAL if i < 3 else "#F0997B")
-        for i in range(len(subset))
-    ]
+    teams  = [d["team"]   for d in subset]
+    values = [d[stat_key] for d in subset]
+    colors = (
+        [TEAL if i < 3 else "#5DCAA5" for i in range(len(subset))]
+        if best_first
+        else [CORAL if i < 3 else "#F0997B" for i in range(len(subset))]
+    )
+    suffix = "%" if "pct" in stat_key else ""
+    title  = f"{'Best' if best_first else 'Worst'} {len(subset)} — {label}"
 
     fig = go.Figure(go.Bar(
         y=teams, x=values, orientation="h",
-        marker_color=colors,
+        marker=dict(color=colors, opacity=0.9),
         text=[_fmt(v, stat_key) for v in values],
-        textposition="outside", textfont=dict(size=11),
+        textposition="outside", textfont=dict(size=11, color=TEXT),
+        hovertemplate=(
+            f"<b>%{{y}}</b><br>{label}: <b>%{{x:.2f}}{suffix}</b><extra></extra>"
+        ),
     ))
     fig.update_layout(
-        height=max(300, len(subset) * 42 + 80),
-        title=dict(text=f"{'Best' if best_first else 'Worst'} {len(subset)} — {label}",
-                   font=dict(size=14), x=0),
-        xaxis=dict(gridcolor="rgba(128,128,128,0.12)"),
+        height=max(320, len(subset) * 44 + 80),
+        title=dict(text=title, font=dict(size=14, color=TEXT), x=0),
+        xaxis=dict(gridcolor=SLATE, zeroline=False),
         yaxis=dict(autorange="reversed", tickfont=dict(size=12)),
         showlegend=False,
-        **_layout(),
+        **_base_layout(),
     )
     return fig
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHART: K% vs ERA+ scatter
+# ─────────────────────────────────────────────────────────────────────────────
+
 def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
-    rows = [d for d in data if d.get("k_pct") is not None and d.get("era_plus") is not None]
+    rows = [d for d in data
+            if d.get("k_pct") is not None and d.get("era_plus") is not None]
     if len(rows) < 2:
         return None
 
     avg_k  = sum(d["k_pct"]   for d in rows) / len(rows)
     avg_ep = sum(d["era_plus"] for d in rows) / len(rows)
 
-    def color(d):
-        if d["k_pct"] >= avg_k and d["era_plus"] >= avg_ep:
-            return TEAL
-        if d["k_pct"] < avg_k and d["era_plus"] < avg_ep:
-            return CORAL
-        return BLUE
+    def _color(d: Dict) -> str:
+        above_k  = d["k_pct"]   >= avg_k
+        above_ep = d["era_plus"] >= avg_ep
+        if above_k and above_ep:
+            return TEAL      # elite
+        if not above_k and not above_ep:
+            return CORAL     # struggling
+        return BLUE          # mixed
+
+    colors = [_color(d) for d in rows]
 
     fig = go.Figure()
-    fig.add_vline(x=avg_k,  line_dash="dot", line_color="rgba(128,128,128,0.4)")
-    fig.add_hline(y=avg_ep, line_dash="dot", line_color="rgba(128,128,128,0.4)")
+
+    # Quadrant reference lines
+    fig.add_vline(x=avg_k,  line_dash="dot",
+                  line_color="rgba(148,163,184,0.30)", line_width=1)
+    fig.add_hline(y=avg_ep, line_dash="dot",
+                  line_color="rgba(148,163,184,0.30)", line_width=1)
+
+    # Quadrant labels (annotations)
+    k_vals  = [d["k_pct"]   for d in rows]
+    ep_vals = [d["era_plus"] for d in rows]
+    pad_k   = (max(k_vals) - min(k_vals)) * 0.08
+    pad_ep  = (max(ep_vals) - min(ep_vals)) * 0.08
+
+    label_cfg = dict(font_size=9, showarrow=False,
+                     font_color="rgba(148,163,184,0.55)")
+    fig.add_annotation(x=max(k_vals),  y=max(ep_vals),
+                        text="⭐ Elite sustainable",
+                        xanchor="right", yanchor="top", **label_cfg)
+    fig.add_annotation(x=min(k_vals),  y=max(ep_vals),
+                        text="Lucky / BABIP driven",
+                        xanchor="left",  yanchor="top", **label_cfg)
+    fig.add_annotation(x=max(k_vals),  y=min(ep_vals),
+                        text="High K%, poor results",
+                        xanchor="right", yanchor="bottom", **label_cfg)
+    fig.add_annotation(x=min(k_vals),  y=min(ep_vals),
+                        text="⚠️ Struggling",
+                        xanchor="left",  yanchor="bottom", **label_cfg)
 
     fig.add_trace(go.Scatter(
         x=[d["k_pct"]    for d in rows],
@@ -169,61 +443,81 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
         mode="markers+text",
         text=[d["team"]  for d in rows],
         textposition="top center",
-        textfont=dict(size=10),
-        marker=dict(color=[color(d) for d in rows], size=10,
-                    line=dict(color="white", width=1)),
-        hovertemplate="<b>%{text}</b><br>K%%: %{x:.1f}%%<br>ERA+: %{y:.0f}<extra></extra>",
+        textfont=dict(size=10, color=TEXT),
+        marker=dict(color=colors, size=11,
+                    line=dict(color="rgba(255,255,255,0.25)", width=1)),
+        hovertemplate=(
+            "<b>%{text}</b><br>"
+            "K%%: <b>%{x:.1f}%%</b><br>"
+            "ERA+: <b>%{y:.0f}</b>"
+            "<extra></extra>"
+        ),
     ))
 
-    k_vals  = [d["k_pct"]   for d in rows]
-    ep_vals = [d["era_plus"] for d in rows]
-    pad_k   = (max(k_vals) - min(k_vals)) * 0.12
-    pad_ep  = (max(ep_vals) - min(ep_vals)) * 0.12
-
     fig.update_layout(
-        height=460,
-        xaxis=dict(title="Team K%", tickformat=".1f", ticksuffix="%",
+        height=490,
+        title=dict(text="K% vs ERA+ — Sustainability Quadrant",
+                   font=dict(size=15, color=TEXT), x=0),
+        xaxis=dict(title="Team K%  (FanGraphs)",
+                   tickformat=".1f", ticksuffix="%",
                    range=[min(k_vals) - pad_k, max(k_vals) + pad_k],
-                   gridcolor="rgba(128,128,128,0.12)"),
-        yaxis=dict(title="ERA+",
+                   gridcolor=SLATE, zeroline=False),
+        yaxis=dict(title="ERA+  (park-adjusted, FanGraphs)",
                    range=[min(ep_vals) - pad_ep, max(ep_vals) + pad_ep],
-                   gridcolor="rgba(128,128,128,0.12)"),
-        **_layout(),
+                   gridcolor=SLATE, zeroline=False),
+        **_base_layout(),
     )
     return fig
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHART: FIP − ERA gap
+# ─────────────────────────────────────────────────────────────────────────────
+
 def chart_fip_era_gap(data: List[Dict]) -> Optional[go.Figure]:
-    rows = [d for d in data if d.get("era") is not None and d.get("fip") is not None]
+    rows = [d for d in data
+            if d.get("era") is not None and d.get("fip") is not None]
     if not rows:
         return None
     rows = sorted(rows, key=lambda x: x["era"] - x["fip"], reverse=True)
 
-    teams  = [d["team"]                     for d in rows]
+    teams  = [d["team"] for d in rows]
     gaps   = [round(d["era"] - d["fip"], 2) for d in rows]
-    colors = [CORAL if g > 0 else TEAL      for g in gaps]
+    colors = [CORAL if g > 0 else TEAL for g in gaps]
 
     fig = go.Figure(go.Bar(
         y=teams, x=gaps, orientation="h",
-        marker_color=colors,
+        marker=dict(color=colors, opacity=0.9),
         text=[f"{g:+.2f}" for g in gaps],
-        textposition="outside", textfont=dict(size=10),
-        hovertemplate="<b>%{y}</b><br>ERA − FIP: %{x:+.2f}<extra></extra>",
+        textposition="outside", textfont=dict(size=10, color=TEXT),
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "ERA − FIP: <b>%{x:+.2f}</b><br>"
+            "<i>Positive = ERA above FIP (due for improvement)</i>"
+            "<extra></extra>"
+        ),
     ))
-    fig.add_vline(x=0, line_color="rgba(128,128,128,0.4)", line_width=1)
+    fig.add_vline(x=0, line_color="rgba(148,163,184,0.4)", line_width=1)
     fig.update_layout(
-        height=max(520, len(rows) * 20 + 80),
-        xaxis=dict(title="ERA − FIP", gridcolor="rgba(128,128,128,0.12)"),
+        height=max(540, len(rows) * 20 + 80),
+        title=dict(text="ERA − FIP Gap  (Regression Radar)",
+                   font=dict(size=15, color=TEXT), x=0),
+        xaxis=dict(title="ERA minus FIP  (orange → due for improvement)",
+                   gridcolor=SLATE, zeroline=False),
         yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
         showlegend=False,
-        **_layout(),
+        **_base_layout(),
     )
     return fig
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHART: FIP vs xFIP
+# ─────────────────────────────────────────────────────────────────────────────
+
 def chart_fip_xfip(data: List[Dict]) -> Optional[go.Figure]:
-    """FIP vs xFIP — shows which teams are getting lucky on HR/FB rate."""
-    rows = [d for d in data if d.get("fip") is not None and d.get("xfip") is not None]
+    rows = [d for d in data
+            if d.get("fip") is not None and d.get("xfip") is not None]
     if not rows:
         return None
     rows = sorted(rows, key=lambda x: x["fip"])
@@ -235,72 +529,294 @@ def chart_fip_xfip(data: List[Dict]) -> Optional[go.Figure]:
     fig = go.Figure()
     fig.add_trace(go.Bar(
         y=teams, x=fip, name="FIP", orientation="h",
-        marker_color=BLUE,
-        text=[f"{v:.2f}" for v in fip], textposition="outside", textfont=dict(size=10),
+        marker=dict(color=BLUE, opacity=0.88),
+        text=[f"{v:.2f}" for v in fip],
+        textposition="outside", textfont=dict(size=10, color=TEXT),
+        hovertemplate="<b>%{y}</b><br>FIP: <b>%{x:.2f}</b><extra></extra>",
     ))
     fig.add_trace(go.Bar(
         y=teams, x=xfip, name="xFIP", orientation="h",
-        marker_color=PURPLE,
-        text=[f"{v:.2f}" for v in xfip], textposition="outside", textfont=dict(size=10),
+        marker=dict(color=PURPLE, opacity=0.88),
+        text=[f"{v:.2f}" for v in xfip],
+        textposition="outside", textfont=dict(size=10, color=TEXT),
+        hovertemplate="<b>%{y}</b><br>xFIP: <b>%{x:.2f}</b><extra></extra>",
     ))
     fig.update_layout(
         barmode="group",
-        height=max(520, len(rows) * 22 + 80),
-        xaxis=dict(title="ERA scale", range=[2.0, 6.5], gridcolor="rgba(128,128,128,0.12)"),
+        height=max(540, len(rows) * 24 + 100),
+        title=dict(text="FIP vs xFIP — HR/FB Luck Detector",
+                   font=dict(size=15, color=TEXT), x=0),
+        xaxis=dict(title="ERA-scale metric", range=[2.0, 6.8],
+                   gridcolor=SLATE, zeroline=False),
         yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-        legend=dict(orientation="h", y=1.02, x=0),
-        **_layout(),
+        legend=dict(orientation="h", y=1.04, x=0,
+                    bgcolor="rgba(0,0,0,0)", borderwidth=0),
+        **_base_layout(),
     )
     return fig
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN RENDER
+# UI COMPONENTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def render_pitching_dashboard():
-    season = datetime.today().year
-    st.markdown("### ⚾ Team Pitching Dashboard")
+def _render_header(season: int) -> None:
     st.markdown(
-        f"*Live {season} data — FanGraphs (ERA, FIP, xFIP, K%, ERA+) "
-        "merged with MLB API starter/bullpen split.*"
+        f"""
+        <div class="salci-header">
+            <span style="font-size:2.2rem">⚾</span>
+            <div>
+                <h2>SALCI Pitching Dashboard</h2>
+                <p>{season} Season · FanGraphs advanced metrics merged with MLB Stats API splits</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    data = _load_data(season)
 
-    if not data:
-        st.error("No data loaded. Check your internet connection.")
+def _render_fg_banner(fg_count: int) -> None:
+    if fg_count >= 20:
+        cls, icon, msg = (
+            "ok", "✅",
+            f"<strong>FanGraphs connected</strong> — "
+            f"{fg_count}/30 teams with advanced metrics "
+            f"(ERA+, FIP, xFIP, SIERA, K%)"
+            f"<br><span class='label'>Park-adjusted, run-environment neutral stats "
+            f"via pybaseball · refreshes hourly</span>",
+        )
+    elif fg_count > 0:
+        cls, icon, msg = (
+            "warn", "⚠️",
+            f"<strong>FanGraphs partial</strong> — "
+            f"{fg_count}/30 teams · some advanced stats missing"
+            f"<br><span class='label'>Check pybaseball install or FanGraphs availability</span>",
+        )
+    else:
+        cls, icon, msg = (
+            "warn", "🔌",
+            "<strong>FanGraphs offline</strong> — "
+            "showing MLB Stats API data only (ERA, WHIP, Starter/Bullpen split)"
+            "<br><span class='label'>Install pybaseball and ensure network access to fangraphs.com</span>",
+        )
+    st.markdown(
+        f'<div class="fg-banner {cls}">'
+        f'<span class="icon">{icon}</span>'
+        f'<div>{msg}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_top_performers(data: List[Dict]) -> None:
+    st.markdown(
+        '<div class="section-divider"></div>'
+        '<p style="font-size:0.78rem;color:#64748b;letter-spacing:1px;'
+        'text-transform:uppercase;font-weight:600;margin:0 0 10px 2px">'
+        "🏆 Top 6 Starter ERAs</p>",
+        unsafe_allow_html=True,
+    )
+    sp_rows = sorted(_valid(data, "starter_era"), key=lambda x: x["starter_era"])[:6]
+    if not sp_rows:
+        st.caption("No starter ERA data available yet.")
         return
 
-    # ── Source badge ──────────────────────────────────────────────────────────
-    fg_count = sum(1 for d in data if "FanGraphs" in d.get("source", ""))
-    if fg_count > 0:
-        st.success(f"✅ Live FanGraphs data loaded for {fg_count}/30 teams — ERA, FIP, xFIP, starter/bullpen split")
-    else:
-        st.warning("⚠️ FanGraphs scrape failed — showing MLB Stats API data only.")
+    cols = st.columns(6)
+    for i, team in enumerate(sp_rows):
+        abbr = team["team"]
+        era  = team["starter_era"]
+        logo = TEAM_LOGOS.get(abbr, "")
+        with cols[i]:
+            st.markdown(
+                f'<div class="perf-card">'
+                f'{"<img src=" + chr(34) + logo + chr(34) + " width=40 height=40 style=object-fit:contain>" if logo else ""}'
+                f'<div class="team-abbr">{abbr}</div>'
+                f'<div class="stat-val">{era:.2f}</div>'
+                f'<div class="stat-lbl">SP ERA</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
-    st.markdown("---")
 
-    # ── Chart selector ────────────────────────────────────────────────────────
-    view = st.radio(
-        "Select chart",
-        ["📊 Starter vs Bullpen ERA", "🏆 Rankings", "🎯 K% vs ERA+",
-         "🔮 FIP − ERA Gap", "📐 FIP vs xFIP"],
-        horizontal=True,
-        key="pitching_view",
-    )
-    st.markdown("---")
+def _render_key_insights(data: List[Dict]) -> None:
+    with st.expander("💡 Key Insights & Methodology", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(
+                '<div class="insight-box green">'
+                "<strong>What is ERA+?</strong><br>"
+                "Park-adjusted ERA relative to league average (100 = league avg, "
+                "120 = 20% better than average). Sourced from FanGraphs."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                '<div class="insight-box blue">'
+                "<strong>FIP vs xFIP</strong><br>"
+                "FIP removes defence. xFIP also normalises HR/FB rate to league average. "
+                "<em>FIP &gt; xFIP</em> = giving up too many HRs, likely to improve."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            st.markdown(
+                '<div class="insight-box orange">'
+                "<strong>ERA − FIP gap</strong><br>"
+                "Positive gap (orange) = ERA exceeds FIP → pitching worse than true skill, "
+                "regression candidate. Negative (teal) = outperforming, watch for decline."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                '<div class="insight-box green">'
+                "<strong>K% Quadrant</strong><br>"
+                "Top-right of the K% vs ERA+ chart = sustainable elite pitching. "
+                "High ERA+ with low K% often signals BABIP luck, not true dominance."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            "<br><small style='color:#475569'>"
+            "Sources · ERA / WHIP / SP split / BP split: MLB Stats API (official). "
+            "FIP / xFIP / SIERA / K% / ERA+: FanGraphs via pybaseball. "
+            "Data refreshes every 60 minutes."
+            "</small>",
+            unsafe_allow_html=True,
+        )
 
-    # ─── VIEW 1: Starter vs Bullpen ERA ───────────────────────────────────────
-    if view == "📊 Starter vs Bullpen ERA":
-        st.markdown("#### Starter ERA vs Bullpen ERA — all 30 teams")
+
+def _render_data_table(data: List[Dict]) -> None:
+    with st.expander("📋 Full 30-Team Data Table", expanded=False):
+        # Determine colour thresholds
+        sp_vals = [d["starter_era"] for d in data if d.get("starter_era")]
+        sp_med  = sorted(sp_vals)[len(sp_vals) // 2] if sp_vals else 4.5
+
+        rows_html = ""
+        for d in sorted(data, key=lambda x: x.get("starter_era") or 99):
+            abbr     = d["team"]
+            logo     = _logo_html(abbr, 26)
+            sp_era   = d.get("starter_era")
+            bp_era   = d.get("bullpen_era")
+            era      = d.get("era")
+            fip      = d.get("fip")
+            xfip     = d.get("xfip")
+            siera    = d.get("siera")
+            whip     = d.get("whip")
+            k_pct    = d.get("k_pct")
+            era_plus = d.get("era_plus")
+            source   = d.get("source", "—")
+
+            def _td(val, key, invert=False):
+                fmt = _fmt(val, key)
+                if val is None:
+                    return f"<td style='color:#475569'>{fmt}</td>"
+                # colour hint for key ERA columns
+                if key in ("era", "fip", "xfip") and val is not None:
+                    cls = "good" if val < 3.80 else ("bad" if val > 4.80 else "")
+                    return f'<td class="{cls}">{fmt}</td>'
+                if key == "era_plus" and val is not None:
+                    cls = "good" if val > 110 else ("bad" if val < 90 else "")
+                    return f'<td class="{cls}">{fmt}</td>'
+                return f"<td>{fmt}</td>"
+
+            if "FanGraphs" in source:
+                badge = '<span class="badge fg">FG</span>'
+            elif "MLB" in source:
+                badge = '<span class="badge mlb">MLB</span>'
+            else:
+                badge = '<span class="badge miss">—</span>'
+
+            rows_html += (
+                f"<tr>"
+                f"<td>{logo}</td>"
+                f"<td style='font-weight:700;letter-spacing:0.5px'>{abbr}</td>"
+                + _td(sp_era,  "era")
+                + _td(bp_era,  "era")
+                + _td(era,     "era")
+                + _td(fip,     "fip")
+                + _td(xfip,    "xfip")
+                + _td(siera,   "siera")
+                + _td(whip,    "whip")
+                + _td(k_pct,   "k_pct")
+                + _td(era_plus,"era_plus")
+                + f"<td>{badge}</td>"
+                + "</tr>"
+            )
+
+        headers = ["", "Team", "SP ERA", "BP ERA", "ERA",
+                   "FIP", "xFIP", "SIERA", "WHIP", "K%", "ERA+", "Source"]
+        th_html = "".join(f"<th>{h}</th>" for h in headers)
+
+        table_html = (
+            f'<div style="overflow-x:auto;border-radius:8px;'
+            f'border:1px solid rgba(148,163,184,0.12);padding:0">'
+            f'<table class="salci-table">'
+            f"<thead><tr>{th_html}</tr></thead>"
+            f"<tbody>{rows_html}</tbody>"
+            f"</table></div>"
+        )
+        st.markdown(table_html, unsafe_allow_html=True)
         st.caption(
-            "Source: MLB Stats API sitCodes split (startingPitchers / reliefPitchers).  "
-            "Sorted by Starter ERA best → worst."
+            "🟢 Green = strong / 🔴 Red = weak  ·  "
+            "FG badge = FanGraphs advanced metrics  ·  "
+            "MLB badge = MLB Stats API only  ·  "
+            "Sorted by Starter ERA best → worst"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN RENDER FUNCTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def render_pitching_dashboard() -> None:
+    # Inject CSS once
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+    season = datetime.today().year
+    _render_header(season)
+
+    # ── Load data ─────────────────────────────────────────────────────────────
+    data = _load_data(season)
+    if not data:
+        st.error("❌ No data loaded. Check your internet connection or data pipeline.")
+        return
+
+    # ── FanGraphs banner ──────────────────────────────────────────────────────
+    fg_count = sum(1 for d in data if "FanGraphs" in d.get("source", ""))
+    _render_fg_banner(fg_count)
+
+    # ── Top performers strip ──────────────────────────────────────────────────
+    _render_top_performers(data)
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    # ── Key insights (collapsed by default) ───────────────────────────────────
+    _render_key_insights(data)
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TABS  (replaces radio selector)
+    # ─────────────────────────────────────────────────────────────────────────
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊  Starter vs Bullpen",
+        "🏆  Rankings",
+        "🎯  K% vs ERA+",
+        "🔮  FIP – ERA Gap",
+        "📐  FIP vs xFIP",
+    ])
+
+    # ── TAB 1: Starter vs Bullpen ERA ────────────────────────────────────────
+    with tab1:
+        st.markdown(
+            "**Starter ERA vs Bullpen ERA** — sorted by starter ERA (best → worst). "
+            "Source: MLB Stats API `sitCodes` split (`startingPitchers` / `reliefPitchers`)."
         )
         has_split = any(d.get("starter_era") for d in data)
         if not has_split:
-            st.warning("Starter/bullpen split not available yet — likely too early in the season.")
+            st.warning("⏳ Starter/bullpen split not available yet — likely too early in the season.")
         else:
             fig = chart_starter_bullpen(data)
             if fig:
@@ -310,171 +826,188 @@ def render_pitching_dashboard():
             if sp_rows:
                 best  = min(sp_rows, key=lambda x: x["starter_era"])
                 worst = max(sp_rows, key=lambda x: x["starter_era"])
-                c1, c2 = st.columns(2)
-                c1.metric("Best Starter ERA",  f"{best['team']}  {best['starter_era']:.2f}")
-                c2.metric("Worst Starter ERA", f"{worst['team']}  {worst['starter_era']:.2f}")
+                gap_rows = [d for d in data
+                            if d.get("starter_era") and d.get("bullpen_era")]
 
-                # Biggest gap teams (bullpen >> starter or vice versa)
-                gap_rows = [d for d in data if d.get("starter_era") and d.get("bullpen_era")]
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric(
+                    "Best Starter ERA",
+                    f"{best['starter_era']:.2f}",
+                    delta=best["team"],
+                    delta_color="off",
+                )
+                c2.metric(
+                    "Worst Starter ERA",
+                    f"{worst['starter_era']:.2f}",
+                    delta=worst["team"],
+                    delta_color="off",
+                )
                 if gap_rows:
-                    best_gap  = max(gap_rows, key=lambda x: x["bullpen_era"] - x["starter_era"])
-                    worst_gap = min(gap_rows, key=lambda x: x["bullpen_era"] - x["starter_era"])
-                    c3, c4 = st.columns(2)
-                    diff = best_gap["bullpen_era"] - best_gap["starter_era"]
+                    biggest_risk = max(
+                        gap_rows,
+                        key=lambda x: x["bullpen_era"] - x["starter_era"],
+                    )
+                    strongest_bp = min(
+                        gap_rows,
+                        key=lambda x: x["bullpen_era"] - x["starter_era"],
+                    )
+                    diff_risk = biggest_risk["bullpen_era"] - biggest_risk["starter_era"]
+                    diff_bp   = strongest_bp["bullpen_era"] - strongest_bp["starter_era"]
                     c3.metric(
-                        "Biggest bullpen risk",
-                        f"{best_gap['team']}",
-                        delta=f"BP {best_gap['bullpen_era']:.2f} vs SP {best_gap['starter_era']:.2f} (+{diff:.2f})",
+                        "Biggest Bullpen Risk",
+                        biggest_risk["team"],
+                        delta=f"BP {biggest_risk['bullpen_era']:.2f} vs SP {biggest_risk['starter_era']:.2f} (+{diff_risk:.2f})",
                         delta_color="inverse",
                     )
-                    diff2 = worst_gap["bullpen_era"] - worst_gap["starter_era"]
                     c4.metric(
-                        "Strongest bullpen",
-                        f"{worst_gap['team']}",
-                        delta=f"BP {worst_gap['bullpen_era']:.2f} vs SP {worst_gap['starter_era']:.2f} ({diff2:.2f})",
+                        "Strongest Bullpen",
+                        strongest_bp["team"],
+                        delta=f"Gap: {diff_bp:.2f}",
                     )
 
-    # ─── VIEW 2: Rankings ────────────────────────────────────────────────────
-    elif view == "🏆 Rankings":
+    # ── TAB 2: Rankings ──────────────────────────────────────────────────────
+    with tab2:
         stat_map = {
-            "Starter ERA":    ("starter_era",  True),
-            "Bullpen ERA":    ("bullpen_era",   True),
-            "Overall ERA":    ("era",           True),
-            "FIP":            ("fip",           True),
-            "xFIP":           ("xfip",          True),
-            "WHIP":           ("whip",          True),
-            "K%":             ("k_pct",         False),
-            "ERA+":           ("era_plus",      False),
+            "Starter ERA":  ("starter_era", True),
+            "Bullpen ERA":  ("bullpen_era",  True),
+            "Overall ERA":  ("era",          True),
+            "FIP":          ("fip",          True),
+            "xFIP":         ("xfip",         True),
+            "SIERA":        ("siera",        True),
+            "WHIP":         ("whip",         True),
+            "K%":           ("k_pct",        False),
+            "ERA+":         ("era_plus",     False),
         }
-        c1, c2, c3 = st.columns(3)
-        stat_label = c1.selectbox("Stat",   list(stat_map.keys()), key="rank_stat")
-        direction  = c2.selectbox("Show",   ["Best 8", "Worst 8", "All 30"],  key="rank_dir")
-        stat_key, lower_is_better = stat_map[stat_label]
+        c1, c2 = st.columns([2, 2])
+        stat_label = c1.selectbox("Stat", list(stat_map.keys()), key="rank_stat")
+        direction  = c2.selectbox("Show", ["Best 8", "Worst 8", "All 30"], key="rank_dir")
 
-        n         = 8 if "8" in direction else 30
+        stat_key, lower_is_better = stat_map[stat_label]
+        n          = 8 if "8" in direction else 30
         best_first = "Best" in direction or "All" in direction
 
         rows_with_stat = _valid(data, stat_key)
         if not rows_with_stat:
-            st.info(f"No data available for {stat_label} yet.")
+            st.info(f"No {stat_label} data available yet — needs FanGraphs (pybaseball).")
         else:
             fig = chart_rankings(rows_with_stat, stat_key, stat_label,
                                   lower_is_better, n, best_first)
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Tweet caption
-            sorted_rows = sorted(rows_with_stat, key=lambda x: x[stat_key],
+            sorted_rows = sorted(rows_with_stat,
+                                  key=lambda x: x[stat_key],
                                   reverse=not lower_is_better)
             if sorted_rows:
                 top = sorted_rows[0]
                 bot = sorted_rows[-1]
                 st.info(
-                    f"📱 **Twitter caption:**\n"
-                    f"\"2026 {stat_label} rankings — "
-                    f"Best: {top['team']} ({_fmt(top[stat_key], stat_key)})  "
-                    f"| Worst: {bot['team']} ({_fmt(bot[stat_key], stat_key)})  "
+                    f"📱 **Copy-paste caption:** "
+                    f"\"{season} {stat_label} — "
+                    f"Best: **{top['team']}** ({_fmt(top[stat_key], stat_key)})  "
+                    f"| Worst: **{bot['team']}** ({_fmt(bot[stat_key], stat_key)})  "
                     f"#SALCI #MLB\""
                 )
 
-    # ─── VIEW 3: K% vs ERA+ ──────────────────────────────────────────────────
-    elif view == "🎯 K% vs ERA+":
-        st.markdown("#### K% vs ERA+ — sustainability quadrant")
-        st.caption(
-            "ERA+ from FanGraphs (park-adjusted). Top-right = elite sustainable pitching. "
-            "Top-left = high ERA+ but low K% = possibly BABIP lucky."
+    # ── TAB 3: K% vs ERA+ ────────────────────────────────────────────────────
+    with tab3:
+        st.markdown(
+            "**Sustainability quadrant.** "
+            "ERA+ is park-adjusted (100 = league avg). "
+            "Top-right = elite & sustainable. "
+            "Top-left = high ERA+ but low K% → may be BABIP luck."
         )
-        has_kpct = any(d.get("k_pct") for d in data)
-        has_erap = any(d.get("era_plus") for d in data)
-        if not has_kpct or not has_erap:
+        if not any(d.get("k_pct") for d in data) or not any(d.get("era_plus") for d in data):
             st.warning(
-                "K% and/or ERA+ not yet available — needs FanGraphs data (pybaseball). "
-                "Early in the season data may not be available yet."
+                "⚠️ K% and/or ERA+ not available — requires FanGraphs (pybaseball). "
+                "Check installation or try again later."
             )
         else:
             fig = chart_kpct_vs_era_plus(data)
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Not enough data points to render scatter plot yet.")
+                st.info("Not enough data points yet.")
 
-    # ─── VIEW 4: FIP − ERA gap ───────────────────────────────────────────────
-    elif view == "🔮 FIP − ERA Gap":
-        st.markdown("#### ERA − FIP gap (regression radar)")
+    # ── TAB 4: FIP − ERA Gap ─────────────────────────────────────────────────
+    with tab4:
         st.markdown(
-            "**Orange** = ERA higher than FIP → pitching worse than true skill, "
-            "due for improvement  \n"
-            "**Green** = ERA lower than FIP → getting lucky or truly elite, "
-            "watch for regression"
+            "**Regression radar.** "
+            "🟠 Orange (positive) = ERA above FIP → pitching worse than true skill, "
+            "due for improvement.  "
+            "🟢 Teal (negative) = ERA below FIP → outperforming, watch for decline."
         )
-        has_fip = any(d.get("fip") for d in data)
-        if not has_fip:
-            st.warning("FIP not available. Ensure pybaseball is installed.")
+        if not any(d.get("fip") for d in data):
+            st.warning("FIP not available. Install pybaseball and ensure FanGraphs is reachable.")
         else:
             fig = chart_fip_era_gap(data)
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Callouts
             gap_rows = [d for d in data if d.get("era") and d.get("fip")]
             if gap_rows:
+                improvement = sorted(
+                    [d for d in gap_rows if d["era"] - d["fip"] > 0.25],
+                    key=lambda x: x["era"] - x["fip"], reverse=True,
+                )[:4]
                 regression = sorted(
                     [d for d in gap_rows if d["era"] - d["fip"] < -0.25],
-                    key=lambda x: x["era"] - x["fip"]
-                )[:3]
-                lucky = sorted(
-                    [d for d in gap_rows if d["era"] - d["fip"] > 0.25],
-                    key=lambda x: x["era"] - x["fip"], reverse=True
-                )[:3]
-                if regression:
-                    names = ", ".join(
-                        f"{d['team']} ({d['era'] - d['fip']:+.2f})" for d in regression
-                    )
-                    st.success(f"🟢 **Regression risk** (ERA well below FIP): {names}")
-                if lucky:
-                    names2 = ", ".join(
-                        f"{d['team']} ({d['era'] - d['fip']:+.2f})" for d in lucky
-                    )
-                    st.warning(f"🟠 **Due for improvement** (ERA above FIP): {names2}")
+                    key=lambda x: x["era"] - x["fip"],
+                )[:4]
 
-    # ─── VIEW 5: FIP vs xFIP ─────────────────────────────────────────────────
-    elif view == "📐 FIP vs xFIP":
-        st.markdown("#### FIP vs xFIP — HR/FB luck detector")
+                if improvement:
+                    names = "  ·  ".join(
+                        f"**{d['team']}** (+{d['era'] - d['fip']:.2f})"
+                        for d in improvement
+                    )
+                    st.warning(f"🟠 **Due for improvement** (ERA well above FIP): {names}")
+                if regression:
+                    names2 = "  ·  ".join(
+                        f"**{d['team']}** ({d['era'] - d['fip']:+.2f})"
+                        for d in regression
+                    )
+                    st.success(f"🟢 **Regression risk** (ERA well below FIP): {names2}")
+
+    # ── TAB 5: FIP vs xFIP ───────────────────────────────────────────────────
+    with tab5:
         st.markdown(
-            "xFIP normalises home runs to league average HR/FB rate.  \n"
-            "**FIP > xFIP** = giving up more HRs than expected → likely to improve  \n"
-            "**FIP < xFIP** = suppressing HRs → could regress"
+            "**HR/FB luck detector.** "
+            "xFIP normalises home runs allowed to league-average HR/FB rate.  \n"
+            "**FIP > xFIP** → allowing more HRs than expected, likely to improve.  \n"
+            "**FIP < xFIP** → suppressing HRs above average, potential regression."
         )
-        has_xfip = any(d.get("xfip") for d in data)
-        if not has_xfip:
-            st.warning("xFIP requires FanGraphs data (pybaseball).")
+        if not any(d.get("xfip") for d in data):
+            st.warning("xFIP requires FanGraphs data. Install pybaseball or check network.")
         else:
             fig = chart_fip_xfip(data)
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ─── Data table ──────────────────────────────────────────────────────────
-    st.markdown("---")
-    with st.expander("📋 Full data table", expanded=False):
-        rows = []
-        for d in data:
-            rows.append({
-                "Team":        d["team"],
-                "SP ERA":      _fmt(d.get("starter_era"), "era"),
-                "BP ERA":      _fmt(d.get("bullpen_era"),  "era"),
-                "ERA":         _fmt(d.get("era"),          "era"),
-                "FIP":         _fmt(d.get("fip"),          "fip"),
-                "xFIP":        _fmt(d.get("xfip"),         "xfip"),
-                "SIERA":       _fmt(d.get("siera"),        "siera"),
-                "WHIP":        _fmt(d.get("whip"),         "whip"),
-                "K%":          _fmt(d.get("k_pct"),        "k_pct"),
-                "ERA+":        _fmt(d.get("era_plus"),     "era_plus"),
-                "Source":      d.get("source", "—"),
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            xfip_rows = [d for d in data if d.get("fip") and d.get("xfip")]
+            if xfip_rows:
+                hr_unlucky = sorted(
+                    [d for d in xfip_rows if d["fip"] - d["xfip"] > 0.20],
+                    key=lambda x: x["fip"] - x["xfip"], reverse=True,
+                )[:3]
+                hr_lucky = sorted(
+                    [d for d in xfip_rows if d["xfip"] - d["fip"] > 0.20],
+                    key=lambda x: x["xfip"] - x["fip"], reverse=True,
+                )[:3]
+                if hr_unlucky:
+                    names = "  ·  ".join(
+                        f"**{d['team']}** (FIP {d['fip']:.2f} > xFIP {d['xfip']:.2f})"
+                        for d in hr_unlucky
+                    )
+                    st.success(f"📈 **HR regression candidates** (FIP > xFIP): {names}")
+                if hr_lucky:
+                    names2 = "  ·  ".join(
+                        f"**{d['team']}** (xFIP {d['xfip']:.2f} > FIP {d['fip']:.2f})"
+                        for d in hr_lucky
+                    )
+                    st.warning(f"⚠️ **HR luck beneficiaries** (xFIP > FIP): {names2}")
 
-    st.caption(
-        "ERA/WHIP/SP split/BP split: MLB Stats API (official). "
-        "FIP/xFIP/SIERA/K%/ERA+: FanGraphs via pybaseball. "
-        "Refreshes hourly."
-    )
+    # ─────────────────────────────────────────────────────────────────────────
+    # Full data table (always visible at bottom)
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    _render_data_table(data)
