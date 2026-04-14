@@ -1733,11 +1733,11 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         edge_color = "#eab308"
         conf_label = "PUSH"
     elif delta > 0:
-        edge_label = "🏠 " + home_team + " Edge"
+        edge_label = home_team + " Edge"
         edge_color = "#22c55e"
         conf_label = "HOME"
     else:
-        edge_label = "✈️ " + away_team + " Edge"
+        edge_label = away_team + " Edge"
         edge_color = "#ef4444"
         conf_label = "AWAY"
 
@@ -1903,31 +1903,6 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     
         st.progress(confidence / 100)
         
-        st.markdown(
-            f"""
-            <div style='
-                text-align:center;
-                padding-top:20px;
-                padding-bottom:20px;
-            '>
-                <div style='font-size:0.8rem; color:#9ca3af;'>MATCHUP EDGE</div>
-                <div style='font-size:1.4rem; font-weight:bold; color:{edge_color};'>
-                    {edge_label}
-                </div>
-                <div style='font-size:0.9rem; color:#d1d5db; margin-top:4px;'>
-                    Δ {delta:.1f}
-                </div>
-    
-                <div style='margin-top:12px;'>
-                    <div style='font-size:0.7rem; color:#9ca3af;'>CONFIDENCE</div>
-                    <div style='font-size:1rem; font-weight:bold; color:white;'>
-                        {confidence}%
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
 
     # ════════════════════════════════════════════════════════════════════════
     # HOME pitcher panel
