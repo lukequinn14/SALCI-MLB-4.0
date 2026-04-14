@@ -334,58 +334,66 @@ _SAVANT_TIMEOUT = 20
 
 
 def _fetch_savant_team_pitching(season: int) -> Dict[str, dict]:
-    """
-    Fetch Baseball Savant team-level pitching leaderboard.
-    Returns dict keyed by team abbreviation.
-
-    The savant CSV is at the pitcher level; we aggregate by team.
-    Falls back gracefully if unavailable.
-    """
+    """Fetch Baseball Savant team pitching data using correct team leaderboard."""
     try:
         import pandas as pd
     except ImportError:
         return {}
 
+    # CORRECT URL: team-level pitching leaderboard (not individual pitchers)
     url = (
-        "https://baseballsavant.mlb.com/leaderboard/custom"
-        f"?year={season}&type=pitcher&filter=&min=q"
-        "&selections=p_era,xfip,hard_hit_percent,whiff_percent,"
-        "k_percent,bb_percent,barrel_batted_rate"
-        "&chart=false&csv=true"
+        f"https://baseballsavant.mlb.com/leaderboard/team-pitching"
+        f"?year={season}&min=0&sort=4&sortDir=asc&csv=true"
     )
+    
+    print(f"[DEBUG] Trying Savant URL: {url}")  # ADD THIS
+    
     try:
-        resp = requests.get(url, timeout=_SAVANT_TIMEOUT,
-                            headers={"User-Agent": "SALCI/2.0"})
+        resp = requests.get(url, timeout=_SAVANT_TIMEOUT, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text))
-    except Exception:
+        print(f"[DEBUG] Savant CSV shape: {df.shape}, columns: {list(df.columns)}")  # ADD THIS
+    except Exception as e:
+        print(f"[DEBUG] Savant fetch failed: {e}")
         return {}
 
-    if df is None or df.empty:
+    if df.empty:
+        print("[DEBUG] Savant DF empty")
         return {}
 
-    # Normalise column names
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    # Normalize column names
+    df.columns = [c.strip().lower().replace(" ", "_").replace("#", "") for c in df.columns]
+    print(f"[DEBUG] Normalized columns: {list(df.columns)}")  # ADD THIS
 
-    # Identify team column (savant uses 'team_name' or 'team')
-    team_col = next((c for c in df.columns if "team" in c), None)
+    # Find team column (common variants)
+    team_col = next((c for c in df.columns if any(x in c for x in ["team", "club"])), None)
     if not team_col:
+        print("[DEBUG] No team column found")
         return {}
 
     result = {}
-    numeric_cols = ["xfip", "hard_hit_percent", "whiff_percent",
-                    "k_percent", "bb_percent", "barrel_batted_rate", "p_era"]
+    numeric_cols = ["xfip", "hard_hit_percent", "whiff_percent", "k_percent", 
+                    "bb_percent", "barrel_batted_rate"]
 
+    # Group by team and average pitcher stats
     for team_name, grp in df.groupby(team_col):
-        abbrev = FULL_NAME_TO_ABBREV.get(str(team_name), str(team_name))
+        # Convert team name → abbrev
+        abbrev = FULL_NAME_TO_ABBREV.get(str(team_name).strip(), str(team_name)[:3].upper())
+        
         agg = {}
         for col in numeric_cols:
             if col in grp.columns:
                 vals = pd.to_numeric(grp[col], errors="coerce").dropna()
-                if not vals.empty:
+                if len(vals) > 0:  # At least 1 qualifying pitcher
                     agg[col] = round(vals.mean(), 2)
-        result[abbrev] = agg
+        
+        if agg:  # Only save if we got useful data
+            result[abbrev] = agg
+            print(f"[DEBUG] Savant data for {abbrev}: {agg}")  # ADD THIS
 
+    print(f"[DEBUG] Final Savant teams: {len(result)}")
     return result
 
 
