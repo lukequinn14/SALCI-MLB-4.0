@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """
-SALCI v5.1 - Advanced MLB Prediction System
+SALCI v6.0 - Advanced MLB Prediction System
 Strikeout Adjusted Lineup Confidence Index
 
-NEW IN v5.1:
-- 🎯 SALCI v3 K-Optimized Weights: Stuff 40%, Matchup 25%, Workload 20%, Location 15%
+NEW IN v6.0 — SALCI v4 Pure Strikeout Engine:
+- 🎯 SALCI v4 Weights: Stuff 52%, Matchup 30%, Workload 10%, Location 8%
+- 📈 Wider score spectrum: Elite aces 75-85+, average ~50, fades <30
+- 🔢 Sigmoid normalization for Stuff — elite arms truly separate from average
+- 📍 Location intentionally de-weighted (great command = contact, not Ks)
+- 🎯 Matchup sub-weights: 70% Opp K% / 30% Zone Contact (pure K focus)
+- 🔥 S-grade tier added: 80+ SALCI = true ace K ceiling
+
+FROM v5.1:
 - 📋 Lineup-Level Matchup: Uses individual hitter K% when lineup confirmed
 - 🎪 Arsenal Display: Per-pitch Stuff+ scores on pitcher cards
 - 📊 Sortable Table View: Quick-scan all pitchers with grades and K-lines
-- 📈 Model Accuracy Dashboard: 7-day and 30-day rolling performance tracking
 - ⚡ Leash Factor: Manager tendencies in workload calculation
-- 💾 UNIFIED REFLECTION SYSTEM: Standardized data storage with reflection.py
 
-INCLUDED FROM v5.0:
+FROM v5.0:
 - 🎯 Real Statcast Data Integration (pybaseball)
 - 📊 True Stuff+ / Location+ calculations from pitch-level data
 - 🔥 Heat Maps - Pitcher attack zones vs hitter damage zones
-- 💡 Progressive Disclosure UI (expandable advanced sections)
 
 Run with:
     streamlit run mlb_salci_full.py
@@ -115,8 +119,8 @@ except ImportError:
 # ----------------------------
 # Version Info
 # ----------------------------
-SALCI_VERSION = "5.1"
-SALCI_BUILD_DATE = "2026-04-06"
+SALCI_VERSION = "6.0"
+SALCI_BUILD_DATE = "2026-04-14"
 
 # ----------------------------
 # Page Configuration
@@ -392,16 +396,18 @@ def get_blend_weights(games_played: int) -> Tuple[float, float]:
     return 0.8, 0.2  # 80% recent, 20% baseline
 
 def get_rating(salci: float) -> Tuple[str, str, str]:
-    """Convert SALCI score to rating (label, emoji, css_class)."""
-    if salci >= 75:
+    """Convert SALCI score to rating (label, emoji, css_class). Calibrated for v4 spectrum."""
+    if salci >= 80:
+        return "S-Tier", "⚡", "elite"
+    elif salci >= 70:
         return "Elite", "🔥", "elite"
     elif salci >= 60:
         return "Strong", "✅", "strong"
-    elif salci >= 45:
+    elif salci >= 44:
         return "Average", "➖", "average"
     elif salci >= 30:
         return "Below Avg", "⚠️", "below"
-    return "Poor", "❌", "poor"
+    return "Fade", "❌", "poor"
 
 def get_hitter_rating(score: float) -> Tuple[str, str]:
     """Convert hitter score to rating."""
@@ -416,12 +422,12 @@ def get_hitter_rating(score: float) -> Tuple[str, str]:
     return "🥶 Ice Cold", "poor"
 
 def get_salci_color(salci: float) -> str:
-    """Get color for SALCI score."""
-    if salci >= 75:
+    """Get color for SALCI score. Calibrated for v4 spectrum."""
+    if salci >= 70:
         return COLORS["elite"]
     elif salci >= 60:
         return COLORS["strong"]
-    elif salci >= 45:
+    elif salci >= 44:
         return COLORS["average"]
     elif salci >= 30:
         return COLORS["below"]
@@ -1010,29 +1016,36 @@ def compute_hitter_score(recent: Dict, baseline: Dict = None) -> float:
 
 def project_lines(salci: float, base_k9: float = 9.0) -> Dict:
     """
-    Project K-line probabilities from SALCI score.
-    
-    Returns: {"expected": float, "lines": {3: prob, 4: prob, ..., 8: prob}}
+    Fallback K-line projections from SALCI score (used when Statcast unavailable).
+    Recalibrated for SALCI v4 spectrum (average=50, elite=75+).
+
+    Returns: {"expected": float, "lines": {3: prob, 4: prob, ..., 9: prob}}
     """
-    expected = (base_k9 * 5.5 / 9) * (0.7 + (salci / 100) * 0.6)
-    
+    # v4 calibration: SALCI 47 → ~1.0 K/IP → 5.5 Ks over 5.5 IP
+    k_per_ip = (salci / 47.0) * 1.0
+    k_per_ip = max(0.40, min(2.40, k_per_ip))
+    expected = k_per_ip * 5.5  # default 5.5 IP
+
     lines = {}
-    for k in range(3, 9):
+    for k in range(3, 10):
         diff = k - expected
-        if diff <= -2:
-            prob = 92
-        elif diff <= -1:
-            prob = 80
-        elif diff <= 0:
-            prob = 65
-        elif diff <= 1:
-            prob = 45
-        elif diff <= 2:
-            prob = 28
+        if diff <= -2.5:
+            prob = 93
+        elif diff <= -1.5:
+            prob = 82
+        elif diff <= -0.5:
+            prob = 68
+        elif diff <= 0.5:
+            prob = 52
+        elif diff <= 1.5:
+            prob = 35
+        elif diff <= 2.5:
+            prob = 20
         else:
-            prob = 15
-        
-        prob = max(5, min(95, prob + (salci - 50) / 10))
+            prob = 10
+
+        # Adjust by how far SALCI deviates from average (50)
+        prob = max(5, min(95, prob + (salci - 50) / 12))
         lines[k] = round(prob)
     
     return {"expected": round(expected, 1), "lines": lines}
@@ -1089,8 +1102,8 @@ def create_pitcher_comparison_chart(pitcher_results: List[Dict]) -> Optional[go.
         textfont=dict(size=12, color='#333')
     ))
     
-    fig.add_vline(x=75, line_dash="dash", line_color="#10b981", line_width=2,
-                  annotation_text="Elite (75+)", annotation_position="top")
+    fig.add_vline(x=80, line_dash="dash", line_color="#10b981", line_width=2,
+                  annotation_text="Elite (80+)", annotation_position="top")
     fig.add_vline(x=60, line_dash="dot", line_color="#3b82f6", line_width=1,
                   annotation_text="Strong (60+)", annotation_position="bottom")
     
@@ -1152,11 +1165,11 @@ def create_hitter_hotness_chart(hitter_results: List[Dict]) -> Optional[go.Figur
     return fig
 
 def create_salci_breakdown_chart() -> go.Figure:
-    """Create donut chart showing SALCI v3 metric weights."""
-    labels = ['Stuff (40%)', 'Matchup (25%)', 'Workload (20%)', 'Location (15%)']
-    values = [40, 25, 20, 15]
+    """Create donut chart showing SALCI v4 metric weights."""
+    labels = ['Stuff (52%)', 'Matchup (30%)', 'Workload (10%)', 'Location (8%)']
+    values = [52, 30, 10, 8]
     colors_list = ['#8b5cf6', '#3b82f6', '#eab308', '#06b6d4']
-    
+
     fig = go.Figure(data=[go.Pie(
         labels=labels,
         values=values,
@@ -1166,22 +1179,22 @@ def create_salci_breakdown_chart() -> go.Figure:
         textposition='outside',
         textfont=dict(size=11)
     )])
-    
+
     fig.update_layout(
-        title=dict(text="SALCI v3 Weight Distribution (K-Optimized)", font=dict(size=16)),
+        title=dict(text="SALCI v4 Weight Distribution (Pure K Engine)", font=dict(size=16)),
         height=350,
         margin=dict(l=20, r=20, t=60, b=60),
         showlegend=False,
         annotations=[
             dict(
-                text="SALCI<br>v3",
+                text="SALCI<br>v4",
                 x=0.5, y=0.5,
                 font=dict(size=14, color="#333"),
                 showarrow=False
             )
         ]
     )
-    
+
     return fig
 
 def create_expected_vs_salci_chart(pitchers: List[Dict]):
@@ -1525,7 +1538,7 @@ def get_team_logo_url(team_name: str) -> str:
 # UI Rendering Functions
 # ----------------------------
 def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
-    """Render pitcher card with SALCI v3 component breakdown + new At Least Ks floor."""
+    """Render pitcher card with SALCI v4 component breakdown + At Least Ks floor."""
     salci = result["salci"]
     rating_label, emoji, css_class = get_rating(salci)
     
@@ -1587,7 +1600,7 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                                     unsafe_allow_html=True)
 
 
-        # v5.1: SALCI v3 4-Component Breakdown
+        # v6.0: SALCI v4 4-Component Breakdown
         if show_stuff_location:
             stuff = result.get("stuff_score")
             location = result.get("location_score")
@@ -1614,14 +1627,14 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         if score >= 35: return "#eab308"
                         return "#ef4444"
                 
-                # Stuff (40%)
+                # Stuff (52%)
                 with col_s:
                     if stuff:
                         stuff_color = get_component_color(stuff, is_100_scale=True)
                         stuff_pct = min(100, max(0, (stuff - 70) * 2))
                         st.markdown(f"""
                         <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>⚡ STUFF (40%)</div>
+                            <div style='font-size: 0.7rem; color: #666;'>⚡ STUFF (52%)</div>
                             <div style='font-size: 1.2rem; font-weight: bold; color: {stuff_color};'>{int(stuff)}</div>
                             <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
                                 <div style='width: {stuff_pct}%; background: {stuff_color}; border-radius: 4px; height: 100%;'></div>
@@ -1632,13 +1645,13 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>STUFF<br>--</div>", 
                                    unsafe_allow_html=True)
                 
-                # Matchup (25%)
+                # Matchup (30%)
                 with col_m:
                     if matchup:
                         match_color = get_component_color(matchup, is_100_scale=False)
                         st.markdown(f"""
                         <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>🎯 MATCHUP (25%)</div>
+                            <div style='font-size: 0.7rem; color: #666;'>🎯 MATCHUP (30%)</div>
                             <div style='font-size: 1.2rem; font-weight: bold; color: {match_color};'>{int(matchup)}</div>
                             <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
                                 <div style='width: {matchup}%; background: {match_color}; border-radius: 4px; height: 100%;'></div>
@@ -1649,13 +1662,13 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>MATCHUP<br>--</div>", 
                                    unsafe_allow_html=True)
                 
-                # Workload (20%)
+                # Workload (10%)
                 with col_w:
                     if workload:
                         work_color = get_component_color(workload, is_100_scale=False)
                         st.markdown(f"""
                         <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>📊 WORKLOAD (20%)</div>
+                            <div style='font-size: 0.7rem; color: #666;'>📊 WORKLOAD (10%)</div>
                             <div style='font-size: 1.2rem; font-weight: bold; color: {work_color};'>{int(workload)}</div>
                             <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
                                 <div style='width: {workload}%; background: {work_color}; border-radius: 4px; height: 100%;'></div>
@@ -1666,14 +1679,14 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
                         st.markdown("<div style='text-align: center; color: #aaa; font-size: 0.8rem;'>WORKLOAD<br>--</div>", 
                                    unsafe_allow_html=True)
                 
-                # Location (15%)
+                # Location (8%)
                 with col_l:
                     if location:
                         loc_color = get_component_color(location, is_100_scale=True)
                         loc_pct = min(100, max(0, (location - 70) * 2))
                         st.markdown(f"""
                         <div style='text-align: center;'>
-                            <div style='font-size: 0.7rem; color: #666;'>📍 LOCATION (15%)</div>
+                            <div style='font-size: 0.7rem; color: #666;'>📍 LOCATION (8%)</div>
                             <div style='font-size: 1.2rem; font-weight: bold; color: {loc_color};'>{int(location)}</div>
                             <div style='background: #e5e7eb; border-radius: 4px; height: 6px; margin-top: 2px;'>
                                 <div style='width: {loc_pct}%; background: {loc_color}; border-radius: 4px; height: 100%;'></div>
@@ -2312,27 +2325,36 @@ def main():
         
         st.markdown("---")
         
-        with st.expander("📊 About SALCI v5.1"):
+        with st.expander("📊 About SALCI v6.0"):
             st.markdown("""
-            **SALCI v5.1** = Strikeout Adjusted Lineup Confidence Index
+            **SALCI v6.0** = Strikeout Adjusted Lineup Confidence Index
             
-            *K-Optimized Model with Unified Reflection System*
+            *Pure Strikeout Prediction Engine — Wider Spectrum, More Separation*
             
-            **SALCI v3 Component Weights:**
+            **SALCI v4 Component Weights:**
             
             | Component | Weight | What It Measures |
             |-----------|--------|------------------|
-            | **Stuff** | 40% | Raw pitch quality (velocity, movement, spin) |
-            | **Matchup** | 25% | Opponent K% (lineup-aware when confirmed) |
-            | **Workload** | 20% | Leash factor, projected innings, per-start IP |
-            | **Location** | 15% | Command and placement precision |
+            | **Stuff** | 52% | Raw pitch quality — whiff power, arsenal depth, CSW% |
+            | **Matchup** | 30% | Opponent K% (lineup-aware) + zone contact tendency |
+            | **Workload** | 10% | Opportunity ceiling — projected IP, manager leash |
+            | **Location** | 8% | Command (intentionally low — precision = contact, not Ks) |
             
-            **v5.1 Improvements:**
-            - ✅ Unified storage system for predictions & reflections
-            - ✅ Early-season blending (v1 + v3 for < 5 games)
-            - ✅ Smart workload (actual avg IP per start vs league average)
-            - ✅ Confirmed-lineup-only charts in Charts & Share tab
-            - ✅ Full accuracy dashboard with rolling metrics
+            **Why v4 is better:**
+            - ✅ Wider score spectrum: Elite aces 75-85+, average ~50, fades <30
+            - ✅ Sigmoid normalization on Stuff — elite arms truly separate
+            - ✅ Location partially inverted: extreme precision hurts K prediction
+            - ✅ Matchup sub-weights: 70% Opp K% / 30% Zone Contact (pure K focus)
+            - ✅ S-tier added (80+) for true K ceiling aces
+            
+            **Score Scale:**
+            - **S (80+):** True ace — 10+ K ceiling
+            - **A (70-79):** Elite K upside
+            - **B+ (60-69):** Strong strikeout pitcher
+            - **B (52-59):** Above-average K potential
+            - **C (44-51):** Average
+            - **D (30-43):** Below average
+            - **F (<30):** Fade
             
             **Data Sources:**
             - 🎯 Statcast: Real physics-based metrics from Baseball Savant
@@ -2476,7 +2498,7 @@ def main():
                     elif key in opp_baseline:
                         opp_stats[key] = opp_baseline[key]
             
-            # Try SALCI v3 first
+            # Try SALCI v4 first (Statcast-powered)
             salci_v3_result = None
             if SALCI_V3_AVAILABLE and STATCAST_AVAILABLE:
                 try:
@@ -2513,14 +2535,14 @@ def main():
                             opp_stats, lineup_hitter_stats, pitcher_hand
                         )
                         
-                        # Calculate SALCI v3
+                        # Calculate SALCI v4
                         salci_v3_result = calculate_salci_v3(
                             stuff_score, location_score, matchup_score, workload_score
                         )
                         salci_grade = salci_v3_result.get('grade', 'C')
                         is_statcast = True
                 except Exception as e:
-                    st.warning(f"SALCI v3 error for {pitcher}: {e}")
+                    st.warning(f"SALCI v4 error for {pitcher}: {e}")
                     pass
             
             # Fallback to SALCI v1
@@ -2581,9 +2603,11 @@ def main():
                         "opponent_id": opp_id,
                         "game_pk": game_pk,
                         "salci": salci,
-                        "salci_grade": ("A" if salci >= 75 else
-                                        "B" if salci >= 60 else
-                                        "C" if salci >= 45 else
+                        "salci_grade": ("S" if salci >= 80 else
+                                        "A" if salci >= 70 else
+                                        "B+" if salci >= 60 else
+                                        "B" if salci >= 52 else
+                                        "C" if salci >= 44 else
                                         "D" if salci >= 30 else "F"),
                         "expected": proj["expected"],
                         "k_lines": proj["lines"],
@@ -2662,7 +2686,7 @@ def main():
     # TAB 1: Pitcher Analysis
     # ======================
     with tab1:
-        st.markdown("### 🎯 Pitcher Strikeout Predictions (SALCI v3)")
+        st.markdown("### 🎯 Pitcher Strikeout Predictions (SALCI v4)")
         
         filtered_pitchers = [p for p in all_pitcher_results if p["salci"] >= min_salci]
         
@@ -2694,20 +2718,22 @@ def main():
             st.markdown("")
             
             if view_mode == "📊 Component Table":
-                st.markdown("#### All Pitchers - SALCI v3 Components")
-                st.caption("Stuff (40%), Matchup (25%), Workload (20%), Location (15%)")
+                st.markdown("#### All Pitchers - SALCI v4 Components")
+                st.caption("Stuff (52%), Matchup (30%), Workload (10%), Location (8%)")
                 
                 def get_grade_emoji(score, is_100_scale=True):
                     if is_100_scale:
-                        if score >= 115: return "A+"
-                        if score >= 110: return "A"
+                        if score >= 120: return "A+"
+                        if score >= 115: return "A"
+                        if score >= 110: return "A-"
                         if score >= 105: return "B+"
                         if score >= 100: return "B"
                         if score >= 95: return "C+"
                         if score >= 90: return "C"
                         return "D"
                     else:
-                        if score >= 70: return "A"
+                        if score >= 75: return "A+"
+                        if score >= 68: return "A"
                         if score >= 60: return "B"
                         if score >= 50: return "C"
                         if score >= 40: return "D"
@@ -2743,7 +2769,7 @@ def main():
                 )
                 
                 st.markdown("---")
-                st.caption("**SALCI v3 Weights:** Stuff (40%) • Matchup (25%) • Workload (20%) • Location (15%)")
+                st.caption("**SALCI v4 Weights:** Stuff (52%) • Matchup (30%) • Workload (10%) • Location (8%)")
                 st.caption("**Source:** 🎯 = Real Statcast physics data | 📊 = Proxy metrics from MLB Stats API")
             
             else:
@@ -3103,7 +3129,7 @@ def main():
                     st.plotly_chart(fig_k_lines, use_container_width=True)
             
             with col4:
-                st.markdown("#### 🧮 SALCI v3 Weight Distribution")
+                st.markdown("#### 🧮 SALCI v4 Weight Distribution")
                 fig_breakdown = create_salci_breakdown_chart()
                 st.plotly_chart(fig_breakdown, use_container_width=True)
             
