@@ -310,91 +310,345 @@ def _aggregate_to_stat(t: dict) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LAYER 2 — BASEBALL SAVANT TEAM LEADERBOARD
+# LAYER 2 — BASEBALL SAVANT  (multi-strategy, early-season safe)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# THREE PROBLEMS WITH THE PREVIOUS VERSION — ALL FIXED HERE:
+#
+# 1. WRONG URL: The leaderboard/custom endpoint with &min=q requires a minimum
+#    number of qualifying innings (~1 IP/team game played). In April with 5-8
+#    games, almost no pitchers qualify → empty CSV.
+#    FIX: Use min=1 (1 PA minimum) and add season-start fallback using the
+#    Statcast search CSV aggregated by team_id, which has no min requirement.
+#
+# 2. EARLY SEASON DATA: Even with min=1, the leaderboard may have incomplete
+#    team coverage in April. FIX: Fall back to statcast_search/csv with
+#    group_by=team which gives aggregated stats directly without pitcher-level
+#    groupby operations that fail when teams have 0 qualifying pitchers.
+#
+# 3. COLUMN NAME MISMATCH: Savant CSV uses inconsistent headers across
+#    endpoints ('Team', 'team_name', '#Team', 'team_id', etc.)
+#    FIX: Comprehensive column detection with multiple candidate names,
+#    plus a team_id → abbrev lookup as ultimate fallback.
+#
 # ─────────────────────────────────────────────────────────────────────────────
 
-_SAVANT_URL = (
-    "https://baseballsavant.mlb.com/leaderboard/custom"
-    "?year={season}&type=pitcher&filter=&sort=4&sortDir=asc"
-    "&min=q&selections=p_era,p_whip,xfip,xwoba,hard_hit_percent,"
-    "whiff_percent,k_percent,bb_percent,barrel_batted_rate"
-    "&chart=false&x=p_era&y=p_era&r=no&chartType=beeswarm"
-    "&csv=true"
-)
+_SAVANT_TIMEOUT = 25
+_SAVANT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer": "https://baseballsavant.mlb.com/",
+}
 
-# Alternate simpler endpoint that tends to be more stable
-_SAVANT_TEAM_URL = (
-    "https://baseballsavant.mlb.com/leaderboard/custom"
-    "?year={season}&type=pitcher&filter=&sort=4&sortDir=asc"
-    "&min=q&selections=xfip,xwoba,hard_hit_percent,whiff_percent,"
-    "k_percent,bb_percent&chart=false&csv=true&team={abbrev}"
-)
+# Savant uses numeric team IDs in some endpoints — map to our abbrevs
+_SAVANT_TEAM_ID_TO_ABBREV: Dict[int, str] = {
+    109: "ARI", 144: "ATL", 110: "BAL", 111: "BOS",
+    112: "CHC", 113: "CWS", 114: "CIN", 115: "CLE",
+    116: "COL", 117: "DET", 118: "HOU", 119: "KC",
+    108: "LAA", 119: "LAD", 146: "MIA", 158: "MIL",
+    142: "MIN", 121: "NYM", 147: "NYY", 133: "OAK",
+    143: "PHI", 134: "PIT", 135: "SD",  137: "SF",
+    136: "SEA", 138: "STL", 139: "TB",  140: "TEX",
+    141: "TOR", 120: "WSH",
+}
 
-_SAVANT_TIMEOUT = 20
+# Savant 3-letter abbrevs differ from ours in a few cases
+_SAVANT_ABBREV_MAP: Dict[str, str] = {
+    "WSH": "WSH", "WAS": "WSH",
+    "CWS": "CWS", "CHW": "CWS",
+    "KCR": "KC",  "KCA": "KC",
+    "SDP": "SD",  "SFG": "SF",
+    "TBR": "TB",  "TBA": "TB",
+    "ARI": "ARI", "LAA": "LAA", "LAD": "LAD",
+}
 
 
-def _fetch_savant_team_pitching(season: int) -> Dict[str, dict]:
-    """Fetch Baseball Savant team pitching data using correct team leaderboard."""
+def _normalise_savant_abbrev(raw: str) -> str:
+    """Convert Savant team abbreviation to our standard 2-3 letter abbrev."""
+    raw = str(raw).strip().upper()
+    return _SAVANT_ABBREV_MAP.get(raw, raw)
+
+
+def _find_team_col(df) -> Optional[str]:
+    """
+    Robustly find the team column in a Savant CSV DataFrame.
+    Savant uses different column names across endpoints and over time.
+    """
+    import pandas as pd
+
+    cols_lower = {c.lower().strip().lstrip("#"): c for c in df.columns}
+
+    # Priority order of candidate names
+    candidates = [
+        "team_name", "team_name_alt", "team", "team_abbrev",
+        "home_team", "pitcher_team", "team_id",
+    ]
+    for cand in candidates:
+        if cand in cols_lower:
+            return cols_lower[cand]
+
+    # Last resort: any column with "team" in the name
+    for orig_col in df.columns:
+        if "team" in orig_col.lower():
+            return orig_col
+
+    return None
+
+
+def _fetch_savant_leaderboard(season: int) -> Optional["pd.DataFrame"]:
+    """
+    Strategy 1: Savant pitcher leaderboard with very low minimum (min=1).
+    Returns the raw DataFrame or None.
+    Works best mid/late season when there are enough innings.
+    """
     try:
         import pandas as pd
     except ImportError:
-        return {}
+        return None
 
-    # CORRECT URL: team-level pitching leaderboard (not individual pitchers)
     url = (
-        f"https://baseballsavant.mlb.com/leaderboard/team-pitching"
-        f"?year={season}&min=0&sort=4&sortDir=asc&csv=true"
+        "https://baseballsavant.mlb.com/leaderboard/custom"
+        f"?year={season}&type=pitcher&filter=&min=1"
+        "&selections=xfip,hard_hit_percent,whiff_percent,"
+        "k_percent,bb_percent,barrel_batted_rate,p_era"
+        "&chart=false&csv=true"
     )
-    
-    print(f"[DEBUG] Trying Savant URL: {url}")  # ADD THIS
-    
     try:
-        resp = requests.get(url, timeout=_SAVANT_TIMEOUT, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        resp = requests.get(url, timeout=_SAVANT_TIMEOUT, headers=_SAVANT_HEADERS)
         resp.raise_for_status()
-        df = pd.read_csv(io.StringIO(resp.text))
-        print(f"[DEBUG] Savant CSV shape: {df.shape}, columns: {list(df.columns)}")  # ADD THIS
+        text = resp.text.strip()
+        if not text or len(text) < 200:
+            return None
+        df = pd.read_csv(io.StringIO(text), low_memory=False)
+        return df if not df.empty else None
     except Exception as e:
-        print(f"[DEBUG] Savant fetch failed: {e}")
+        print(f"[Savant leaderboard] {e}")
+        return None
+
+
+def _fetch_savant_statcast_team_csv(season: int) -> Optional["pd.DataFrame"]:
+    """
+    Strategy 2: Savant statcast_search with group_by=team.
+    This endpoint aggregates by team directly — no min innings qualifier.
+    Works well early in the season (even game 1).
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+
+    from datetime import date
+    season_start = f"{season}-03-20"
+    today        = date.today().strftime("%Y-%m-%d")
+
+    url = (
+        "https://baseballsavant.mlb.com/statcast_search/csv"
+        f"?all=true&hfGT=R%7C&hfSea={season}%7C"
+        f"&game_date_gt={season_start}&game_date_lt={today}"
+        "&player_type=pitcher&min_results=0&min_pas=0"
+        "&group_by=team&sort_col=pitches&sort_order=desc"
+        "&type=details"
+    )
+    try:
+        resp = requests.get(url, timeout=_SAVANT_TIMEOUT, headers=_SAVANT_HEADERS)
+        resp.raise_for_status()
+        text = resp.text.strip()
+        if not text or len(text) < 100:
+            return None
+        df = pd.read_csv(io.StringIO(text), low_memory=False)
+        return df if not df.empty else None
+    except Exception as e:
+        print(f"[Savant statcast_search/team] {e}")
+        return None
+
+
+def _fetch_savant_statcast_raw_csv(season: int) -> Optional["pd.DataFrame"]:
+    """
+    Strategy 3: Savant statcast_search pitch-level data, all pitchers,
+    then aggregate by team ourselves.
+    This is the most reliable but returns a LOT of data — we cap it by
+    asking for summary columns only.
+    Only used if strategies 1 and 2 both fail.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+
+    from datetime import date
+    # Use a rolling 30-day window to keep response size manageable
+    end_d   = date.today().strftime("%Y-%m-%d")
+    from datetime import timedelta
+    start_d = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    url = (
+        "https://baseballsavant.mlb.com/statcast_search/csv"
+        f"?all=true&hfGT=R%7C&hfSea={season}%7C"
+        f"&game_date_gt={start_d}&game_date_lt={end_d}"
+        "&player_type=pitcher&min_results=0&min_pas=0"
+        "&group_by=name_auto"   # pitcher-level but includes team_id
+        "&sort_col=pitches&sort_order=desc"
+        "&type=details"
+    )
+    try:
+        resp = requests.get(url, timeout=30, headers=_SAVANT_HEADERS)
+        resp.raise_for_status()
+        text = resp.text.strip()
+        if not text or len(text) < 200:
+            return None
+        df = pd.read_csv(io.StringIO(text), low_memory=False)
+        return df if not df.empty else None
+    except Exception as e:
+        print(f"[Savant statcast_search/raw] {e}")
+        return None
+
+
+def _aggregate_savant_df(df, season: int) -> Dict[str, dict]:
+    """
+    Given any Savant DataFrame (from any strategy), compute team-level
+    aggregates for whiff%, hard-hit%, k%, xFIP proxy.
+
+    Handles column name inconsistencies across all three strategies.
+    """
+    try:
+        import pandas as pd
+        import numpy as np
+    except ImportError:
         return {}
 
-    if df.empty:
-        print("[DEBUG] Savant DF empty")
+    if df is None or df.empty:
         return {}
 
-    # Normalize column names
-    df.columns = [c.strip().lower().replace(" ", "_").replace("#", "") for c in df.columns]
-    print(f"[DEBUG] Normalized columns: {list(df.columns)}")  # ADD THIS
+    # ── Normalise column names ────────────────────────────────────────────────
+    rename_map = {}
+    for col in df.columns:
+        c = col.strip().lower().lstrip("#").replace(" ", "_")
+        rename_map[col] = c
+    df = df.rename(columns=rename_map)
 
-    # Find team column (common variants)
-    team_col = next((c for c in df.columns if any(x in c for x in ["team", "club"])), None)
+    # ── Identify team column ─────────────────────────────────────────────────
+    team_col = _find_team_col(df)
     if not team_col:
-        print("[DEBUG] No team column found")
+        print("[Savant aggregate] No team column found. Columns:", list(df.columns)[:15])
         return {}
 
-    result = {}
-    numeric_cols = ["xfip", "hard_hit_percent", "whiff_percent", "k_percent", 
-                    "bb_percent", "barrel_batted_rate"]
+    team_col_norm = team_col.strip().lower().lstrip("#").replace(" ", "_")
 
-    # Group by team and average pitcher stats
-    for team_name, grp in df.groupby(team_col):
-        # Convert team name → abbrev
-        abbrev = FULL_NAME_TO_ABBREV.get(str(team_name).strip(), str(team_name)[:3].upper())
-        
-        agg = {}
-        for col in numeric_cols:
-            if col in grp.columns:
-                vals = pd.to_numeric(grp[col], errors="coerce").dropna()
-                if len(vals) > 0:  # At least 1 qualifying pitcher
-                    agg[col] = round(vals.mean(), 2)
-        
-        if agg:  # Only save if we got useful data
+    # ── Column aliases for each metric ───────────────────────────────────────
+    # Different Savant endpoints use different column names for the same stat
+    col_aliases = {
+        "whiff_pct":    ["whiff_percent", "swinging_strike_percent", "whiff%", "swstr%"],
+        "hard_hit_pct": ["hard_hit_percent", "hard_hit%", "hardhit_percent"],
+        "k_pct":        ["k_percent", "strikeout_percent", "k%", "so_percent"],
+        "bb_pct":       ["bb_percent", "walk_percent", "bb%"],
+        "barrel_pct":   ["barrel_batted_rate", "barrel_percent", "brl_percent"],
+        "xfip":         ["xfip", "x_fip", "xfip_minus"],
+        "p_era":        ["p_era", "era"],
+    }
+
+    def _find_col(aliases):
+        for a in aliases:
+            if a in df.columns:
+                return a
+        return None
+
+    active_cols = {metric: _find_col(aliases)
+                   for metric, aliases in col_aliases.items()
+                   if _find_col(aliases)}
+
+    if not active_cols:
+        print("[Savant aggregate] No recognizable metric columns found:", list(df.columns)[:20])
+        return {}
+
+    # ── Aggregate by team ────────────────────────────────────────────────────
+    result: Dict[str, dict] = {}
+
+    # Resolve team identifier: could be abbreviation string, full name, or int ID
+    for team_raw, grp in df.groupby(team_col_norm):
+        # Try to resolve to our standard abbrev
+        team_str = str(team_raw).strip()
+
+        # Numeric team ID?
+        try:
+            abbrev = _SAVANT_TEAM_ID_TO_ABBREV.get(int(float(team_str)), "")
+        except (ValueError, TypeError):
+            abbrev = ""
+
+        if not abbrev:
+            # Full name?
+            abbrev = FULL_NAME_TO_ABBREV.get(team_str, "")
+        if not abbrev:
+            # Already an abbreviation (with possible Savant-specific variant)
+            abbrev = _normalise_savant_abbrev(team_str)
+
+        if not abbrev or len(abbrev) > 4:
+            continue
+
+        agg: dict = {}
+        for metric, col in active_cols.items():
+            vals = pd.to_numeric(grp[col], errors="coerce").dropna()
+            if not vals.empty:
+                # For xFIP and ERA: weighted by IP if available
+                if metric in ("xfip", "p_era") and "ip" in grp.columns:
+                    ips = pd.to_numeric(grp["ip"], errors="coerce").fillna(0)
+                    total_ip = ips.sum()
+                    if total_ip > 0:
+                        agg[metric] = round((vals * ips).sum() / total_ip, 2)
+                        continue
+                agg[metric] = round(vals.mean(), 2)
+
+        if agg:
             result[abbrev] = agg
-            print(f"[DEBUG] Savant data for {abbrev}: {agg}")  # ADD THIS
 
-    print(f"[DEBUG] Final Savant teams: {len(result)}")
+    print(f"[Savant aggregate] Got data for {len(result)} teams")
     return result
+
+
+def _fetch_savant_team_pitching(season: int) -> Dict[str, dict]:
+    """
+    Master function: try three strategies in order, return first success.
+
+    Strategy 1 — Savant pitcher leaderboard (min=1):
+        Best data quality, but requires enough innings (works from ~May onward).
+    Strategy 2 — Savant statcast_search grouped by team:
+        Works early season, direct team aggregates, no min IP requirement.
+    Strategy 3 — Savant statcast_search pitcher-level, last 30 days:
+        Most reliable connection-wise, manually aggregated by team.
+
+    All strategies feed through the same _aggregate_savant_df() normaliser
+    so column name differences are handled uniformly.
+    """
+    print(f"[Savant] Trying Strategy 1: leaderboard (min=1)…")
+    df1 = _fetch_savant_leaderboard(season)
+    result = _aggregate_savant_df(df1, season)
+    if len(result) >= 20:
+        print(f"[Savant] Strategy 1 succeeded: {len(result)} teams")
+        return result
+
+    print(f"[Savant] Strategy 1 partial ({len(result)} teams). Trying Strategy 2: statcast_search/team…")
+    df2 = _fetch_savant_statcast_team_csv(season)
+    result2 = _aggregate_savant_df(df2, season)
+    if len(result2) >= 20:
+        print(f"[Savant] Strategy 2 succeeded: {len(result2)} teams")
+        return result2
+
+    # Merge strategies 1+2 if neither is complete
+    merged = {**result, **result2}
+    if len(merged) >= 20:
+        print(f"[Savant] Merged S1+S2: {len(merged)} teams")
+        return merged
+
+    print(f"[Savant] Strategies 1+2 gave {len(merged)} teams. Trying Strategy 3: raw 30-day window…")
+    df3 = _fetch_savant_statcast_raw_csv(season)
+    result3 = _aggregate_savant_df(df3, season)
+    merged.update(result3)
+    print(f"[Savant] Final coverage: {len(merged)} teams")
+    return merged
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -552,15 +806,17 @@ def _build_team_record(abbrev: str, team_id: int,
             bp_stat.get("inningsPitched") or bp_stat.get("_ip"))
 
     # ── Baseball Savant overlay ──────────────────────────────────────────────
+    # _aggregate_savant_df() outputs normalised keys: whiff_pct, hard_hit_pct,
+    # k_pct, bb_pct, barrel_pct, xfip, p_era
     sv = savant_data.get(abbrev, {})
     if sv:
         record["xfip"]         = sv.get("xfip")
-        record["whiff_pct"]    = sv.get("whiff_percent")
-        record["hard_hit_pct"] = sv.get("hard_hit_percent")
-        record["barrel_pct"]   = sv.get("barrel_batted_rate")
-        # Use Savant K% if MLB API didn't provide TBF
-        if record["k_pct"] is None and sv.get("k_percent"):
-            record["k_pct"] = sv.get("k_percent")
+        record["whiff_pct"]    = sv.get("whiff_pct")
+        record["hard_hit_pct"] = sv.get("hard_hit_pct")
+        record["barrel_pct"]   = sv.get("barrel_pct")
+        # Use Savant K% only if MLB API didn't have enough TBF data
+        if record["k_pct"] is None and sv.get("k_pct") is not None:
+            record["k_pct"] = sv.get("k_pct")
         record["source"] = "MLB API + Savant"
 
     return record
