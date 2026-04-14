@@ -64,45 +64,34 @@ TEXT   = "#e2e8f0"
 # The onerror= attribute on every <img> swaps to the MLB fallback automatically
 # if ESPN blocks the request (e.g. Streamlit Cloud CORS / hotlink protection).
 # ─────────────────────────────────────────────────────────────────────────────
-_ESPN_BASE = "https://a.espncdn.com/i/teamlogos/mlb/500"
-_MLB_BASE  = "https://www.mlbstatic.com/team-logos"
+_MLB_BASE = "https://www.mlbstatic.com/team-logos"
 
-# Primary ESPN URLs
+# Primary: MLB official static SVGs — by numeric team ID.
+# These load reliably from Streamlit Cloud (official CDN, no hotlink blocking).
+# SVGs are dark-on-transparent; we wrap every logo in a white pill via CSS
+# so they're visible on both dark and light backgrounds.
 TEAM_LOGOS: Dict[str, str] = {
-    "ARI": f"{_ESPN_BASE}/ari.png", "ATL": f"{_ESPN_BASE}/atl.png",
-    "BAL": f"{_ESPN_BASE}/bal.png", "BOS": f"{_ESPN_BASE}/bos.png",
-    "CHC": f"{_ESPN_BASE}/chc.png", "CWS": f"{_ESPN_BASE}/cws.png",
-    "CIN": f"{_ESPN_BASE}/cin.png", "CLE": f"{_ESPN_BASE}/cle.png",
-    "COL": f"{_ESPN_BASE}/col.png", "DET": f"{_ESPN_BASE}/det.png",
-    "HOU": f"{_ESPN_BASE}/hou.png", "KC":  f"{_ESPN_BASE}/kc.png",
-    "LAA": f"{_ESPN_BASE}/laa.png", "LAD": f"{_ESPN_BASE}/lad.png",
-    "MIA": f"{_ESPN_BASE}/mia.png", "MIL": f"{_ESPN_BASE}/mil.png",
-    "MIN": f"{_ESPN_BASE}/min.png", "NYM": f"{_ESPN_BASE}/nym.png",
-    "NYY": f"{_ESPN_BASE}/nyy.png", "OAK": f"{_ESPN_BASE}/oak.png",
-    "PHI": f"{_ESPN_BASE}/phi.png", "PIT": f"{_ESPN_BASE}/pit.png",
-    "SD":  f"{_ESPN_BASE}/sd.png",  "SF":  f"{_ESPN_BASE}/sf.png",
-    "SEA": f"{_ESPN_BASE}/sea.png", "STL": f"{_ESPN_BASE}/stl.png",
-    "TB":  f"{_ESPN_BASE}/tb.png",  "TEX": f"{_ESPN_BASE}/tex.png",
-    "TOR": f"{_ESPN_BASE}/tor.png", "WSH": f"{_ESPN_BASE}/wsh.png",
+    "ARI": f"{_MLB_BASE}/109.svg",  "ATL": f"{_MLB_BASE}/144.svg",
+    "BAL": f"{_MLB_BASE}/110.svg",  "BOS": f"{_MLB_BASE}/111.svg",
+    "CHC": f"{_MLB_BASE}/112.svg",  "CWS": f"{_MLB_BASE}/113.svg",
+    "CIN": f"{_MLB_BASE}/114.svg",  "CLE": f"{_MLB_BASE}/115.svg",
+    "COL": f"{_MLB_BASE}/116.svg",  "DET": f"{_MLB_BASE}/117.svg",
+    "HOU": f"{_MLB_BASE}/118.svg",  "KC":  f"{_MLB_BASE}/118.svg",
+    "LAA": f"{_MLB_BASE}/108.svg",  "LAD": f"{_MLB_BASE}/119.svg",
+    "MIA": f"{_MLB_BASE}/146.svg",  "MIL": f"{_MLB_BASE}/158.svg",
+    "MIN": f"{_MLB_BASE}/142.svg",  "NYM": f"{_MLB_BASE}/121.svg",
+    "NYY": f"{_MLB_BASE}/147.svg",  "OAK": f"{_MLB_BASE}/133.svg",
+    "PHI": f"{_MLB_BASE}/143.svg",  "PIT": f"{_MLB_BASE}/134.svg",
+    "SD":  f"{_MLB_BASE}/135.svg",  "SF":  f"{_MLB_BASE}/137.svg",
+    "SEA": f"{_MLB_BASE}/136.svg",  "STL": f"{_MLB_BASE}/138.svg",
+    "TB":  f"{_MLB_BASE}/139.svg",  "TEX": f"{_MLB_BASE}/140.svg",
+    "TOR": f"{_MLB_BASE}/141.svg",  "WSH": f"{_MLB_BASE}/120.svg",
 }
 
-# Fallback: MLB official static CDN (numeric team IDs, SVG, very reliable)
+# Fallback: same CDN, different path format (used if primary 404s)
 MLB_FALLBACK_LOGOS: Dict[str, str] = {
-    "ARI": f"{_MLB_BASE}/109.svg", "ATL": f"{_MLB_BASE}/144.svg",
-    "BAL": f"{_MLB_BASE}/110.svg", "BOS": f"{_MLB_BASE}/111.svg",
-    "CHC": f"{_MLB_BASE}/112.svg", "CWS": f"{_MLB_BASE}/113.svg",
-    "CIN": f"{_MLB_BASE}/114.svg", "CLE": f"{_MLB_BASE}/115.svg",
-    "COL": f"{_MLB_BASE}/116.svg", "DET": f"{_MLB_BASE}/117.svg",
-    "HOU": f"{_MLB_BASE}/118.svg", "KC":  f"{_MLB_BASE}/119.svg",
-    "LAA": f"{_MLB_BASE}/108.svg", "LAD": f"{_MLB_BASE}/119.svg",
-    "MIA": f"{_MLB_BASE}/146.svg", "MIL": f"{_MLB_BASE}/158.svg",
-    "MIN": f"{_MLB_BASE}/142.svg", "NYM": f"{_MLB_BASE}/121.svg",
-    "NYY": f"{_MLB_BASE}/147.svg", "OAK": f"{_MLB_BASE}/133.svg",
-    "PHI": f"{_MLB_BASE}/143.svg", "PIT": f"{_MLB_BASE}/134.svg",
-    "SD":  f"{_MLB_BASE}/135.svg", "SF":  f"{_MLB_BASE}/137.svg",
-    "SEA": f"{_MLB_BASE}/136.svg", "STL": f"{_MLB_BASE}/138.svg",
-    "TB":  f"{_MLB_BASE}/139.svg", "TEX": f"{_MLB_BASE}/140.svg",
-    "TOR": f"{_MLB_BASE}/141.svg", "WSH": f"{_MLB_BASE}/120.svg",
+    k: v.replace("/team-logos/", "/team-logos/team/")
+    for k, v in TEAM_LOGOS.items()
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,7 +99,61 @@ MLB_FALLBACK_LOGOS: Dict[str, str] = {
 # ─────────────────────────────────────────────────────────────────────────────
 _CSS = """
 <style>
-/* ── Dashboard header ─────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════
+   SALCI PITCHING DASHBOARD — adaptive CSS
+   Works on Streamlit dark AND light themes.
+   CSS custom properties (vars) flip via prefers-color-scheme.
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+    --salci-bg-card:    rgba(30,41,59,0.70);
+    --salci-bg-insight: rgba(15,23,42,0.60);
+    --salci-bg-th:      rgba(15,23,42,0.50);
+    --salci-text:       #e2e8f0;
+    --salci-text-muted: #94a3b8;
+    --salci-text-dim:   #64748b;
+    --salci-border:     rgba(148,163,184,0.15);
+    --salci-good:       #34d399;
+    --salci-bad:        #f87171;
+    --salci-green:      #1D9E75;
+    --salci-logo-bg:    #ffffff;
+    --salci-logo-border:rgba(0,0,0,0.08);
+    --salci-row-hover:  rgba(29,158,117,0.08);
+}
+
+@media (prefers-color-scheme: light) {
+    :root {
+        --salci-bg-card:    rgba(241,245,249,0.90);
+        --salci-bg-insight: rgba(226,232,240,0.70);
+        --salci-bg-th:      rgba(203,213,225,0.60);
+        --salci-text:       #1e293b;
+        --salci-text-muted: #475569;
+        --salci-text-dim:   #64748b;
+        --salci-border:     rgba(30,41,59,0.15);
+        --salci-good:       #16a34a;
+        --salci-bad:        #dc2626;
+        --salci-row-hover:  rgba(29,158,117,0.06);
+    }
+}
+
+/* ── Logo pill — white background so dark SVG logos show everywhere ── */
+.logo-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border-radius: 50%;
+    border: 1px solid var(--salci-logo-border);
+    padding: 3px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    flex-shrink: 0;
+}
+.logo-pill img {
+    display: block;
+    object-fit: contain;
+}
+
+/* ── Dashboard header ─────────────────────────────────── */
 .salci-header {
     display: flex;
     align-items: center;
@@ -118,8 +161,8 @@ _CSS = """
     padding: 18px 22px;
     border-radius: 12px;
     background: linear-gradient(135deg,
-        rgba(29,158,117,0.18) 0%,
-        rgba(55,138,221,0.12) 100%);
+        rgba(29,158,117,0.15) 0%,
+        rgba(55,138,221,0.10) 100%);
     border: 1px solid rgba(29,158,117,0.35);
     margin-bottom: 6px;
 }
@@ -128,15 +171,15 @@ _CSS = """
     font-size: 1.55rem;
     font-weight: 700;
     letter-spacing: -0.4px;
-    color: #f1f5f9;
+    color: var(--salci-text);
 }
 .salci-header p {
     margin: 2px 0 0;
     font-size: 0.83rem;
-    color: #94a3b8;
+    color: var(--salci-text-muted);
 }
 
-/* ── FanGraphs status banner ──────────────────────────────── */
+/* ── Source banner ────────────────────────────────────── */
 .fg-banner {
     display: flex;
     align-items: center;
@@ -146,35 +189,28 @@ _CSS = """
     font-size: 0.88rem;
     font-weight: 500;
     margin: 10px 0 4px;
+    color: var(--salci-text);
 }
-.fg-banner.ok {
-    background: rgba(29,158,117,0.15);
-    border: 1px solid rgba(29,158,117,0.4);
-    color: #6ee7b7;
-}
-.fg-banner.warn {
-    background: rgba(186,117,23,0.15);
-    border: 1px solid rgba(186,117,23,0.4);
-    color: #fcd34d;
-}
-.fg-banner .icon { font-size: 1.3rem; }
-.fg-banner .label { font-size: 0.78rem; color: #94a3b8; font-weight: 400; }
+.fg-banner.ok   { background: rgba(29,158,117,0.13); border: 1px solid rgba(29,158,117,0.40); }
+.fg-banner.warn { background: rgba(186,117,23,0.13); border: 1px solid rgba(186,117,23,0.40); }
+.fg-banner .icon  { font-size: 1.3rem; }
+.fg-banner .label { font-size: 0.78rem; color: var(--salci-text-muted); font-weight: 400; }
 
-/* ── Top performers strip ─────────────────────────────────── */
+/* ── Top performers strip ─────────────────────────────── */
 .perf-card {
-    background: rgba(30,41,59,0.7);
-    border: 1px solid rgba(148,163,184,0.12);
+    background: var(--salci-bg-card);
+    border: 1px solid var(--salci-border);
     border-radius: 10px;
     padding: 12px 10px 10px;
     text-align: center;
     transition: border-color 0.2s;
 }
-.perf-card:hover { border-color: rgba(29,158,117,0.5); }
+.perf-card:hover { border-color: rgba(29,158,117,0.50); }
 .perf-card .team-abbr {
     font-size: 0.78rem;
     font-weight: 700;
     letter-spacing: 1.2px;
-    color: #94a3b8;
+    color: var(--salci-text-muted);
     text-transform: uppercase;
     margin-top: 6px;
     margin-bottom: 2px;
@@ -187,25 +223,25 @@ _CSS = """
 }
 .perf-card .stat-lbl {
     font-size: 0.72rem;
-    color: #64748b;
+    color: var(--salci-text-dim);
     margin-top: 1px;
 }
 
-/* ── Insight cards ────────────────────────────────────────── */
+/* ── Insight cards ────────────────────────────────────── */
 .insight-box {
-    background: rgba(15,23,42,0.6);
+    background: var(--salci-bg-insight);
     border-left: 3px solid;
     border-radius: 0 8px 8px 0;
     padding: 10px 14px;
     font-size: 0.85rem;
     line-height: 1.5;
-    color: #cbd5e1;
+    color: var(--salci-text);
 }
 .insight-box.green  { border-color: #1D9E75; }
 .insight-box.orange { border-color: #D85A30; }
 .insight-box.blue   { border-color: #378ADD; }
 
-/* ── Data table ───────────────────────────────────────────── */
+/* ── Data table ───────────────────────────────────────── */
 .salci-table {
     width: 100%;
     border-collapse: collapse;
@@ -215,24 +251,24 @@ _CSS = """
 .salci-table th {
     text-align: left;
     padding: 8px 12px;
-    border-bottom: 1px solid rgba(148,163,184,0.2);
-    color: #64748b;
+    border-bottom: 1px solid var(--salci-border);
+    color: var(--salci-text-dim);
     font-size: 0.75rem;
     letter-spacing: 0.8px;
     text-transform: uppercase;
     font-weight: 600;
-    background: rgba(15,23,42,0.5);
+    background: var(--salci-bg-th);
 }
 .salci-table td {
     padding: 7px 12px;
     border-bottom: 1px solid rgba(148,163,184,0.07);
-    color: #e2e8f0;
+    color: var(--salci-text);
     vertical-align: middle;
     white-space: nowrap;
 }
-.salci-table tr:hover td { background: rgba(29,158,117,0.06); }
-.salci-table td.good { color: #34d399; font-weight: 600; }
-.salci-table td.bad  { color: #f87171; font-weight: 600; }
+.salci-table tr:hover td { background: var(--salci-row-hover); }
+.salci-table td.good { color: var(--salci-good); font-weight: 600; }
+.salci-table td.bad  { color: var(--salci-bad);  font-weight: 600; }
 .salci-table .badge {
     display: inline-block;
     padding: 2px 7px;
@@ -241,15 +277,15 @@ _CSS = """
     font-weight: 700;
     letter-spacing: 0.5px;
 }
-.salci-table .badge.fg   { background: rgba(29,158,117,0.2); color: #6ee7b7; }
-.salci-table .badge.mlb  { background: rgba(55,138,221,0.2); color: #93c5fd; }
-.salci-table .badge.miss { background: rgba(100,116,139,0.2); color: #94a3b8; }
+.salci-table .badge.fg   { background: rgba(29,158,117,0.20); color: #6ee7b7; }
+.salci-table .badge.mlb  { background: rgba(55,138,221,0.20); color: #93c5fd; }
+.salci-table .badge.miss { background: rgba(100,116,139,0.20); color: var(--salci-text-muted); }
 
-/* ── Section divider ──────────────────────────────────────── */
+/* ── Section divider ──────────────────────────────────── */
 .section-divider {
     height: 1px;
     background: linear-gradient(90deg,
-        rgba(29,158,117,0.4) 0%,
+        rgba(29,158,117,0.40) 0%,
         rgba(55,138,221,0.15) 50%,
         transparent 100%);
     margin: 18px 0;
@@ -312,22 +348,25 @@ def _valid(data: List[Dict], key: str) -> List[Dict]:
 
 
 def _logo_html(team: str, size: int = 28) -> str:
-    """<img> with ESPN primary + MLB static fallback on onerror."""
+    """
+    Return a white-pill-wrapped <img> for a team logo.
+    The pill ensures dark SVG logos are visible on both dark and light bg.
+    Falls back gracefully if both CDNs fail.
+    """
     url      = TEAM_LOGOS.get(team, "")
     fallback = MLB_FALLBACK_LOGOS.get(team, "")
     if not url and not fallback:
-        return "<span style='font-size:0.75rem;color:#64748b;font-weight:700'>" + team + "</span>"
+        return ("<span style='font-size:0.75rem;font-weight:700;"
+                "color:var(--salci-text-muted)'>" + team + "</span>")
     if not url:
         url, fallback = fallback, ""
-    if fallback:
-        onerror = "this.src='" + fallback + "';this.onerror=null;"
-    else:
-        onerror = "this.style.display='none';"
-    return (
-        '<img src="' + url + '" width="' + str(size) + '" height="' + str(size) + '" '
-        'style="vertical-align:middle;object-fit:contain;" '
-        'alt="' + team + '" onerror="' + onerror + '">'
-    )
+    onerror = (("this.src='" + fallback + "';this.onerror=null;") if fallback
+               else "this.style.display='none';")
+    img = ('<img src="' + url + '" width="' + str(size) + '" height="' + str(size) + '" '
+           'style="display:block;object-fit:contain;" '
+           'alt="' + team + '" onerror="' + onerror + '">')
+    return ('<span class="logo-pill" style="width:' + str(size + 8) + 'px;height:'
+            + str(size + 8) + 'px;">' + img + '</span>')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,13 +530,11 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
             title      = dict(text=label, font=dict(size=11, color="#94a3b8")),
         ),
         yaxis = dict(
-            autorange  = "reversed",
-            tickfont   = dict(size=11, color=TEXT),
-            # Push tick labels right to leave room for logo
-            ticklabelposition = "outside right",
+            autorange      = "reversed",
+            showticklabels = False,   # logos replace text labels entirely
         ),
         showlegend  = False,
-        **_base_layout(margin=dict(l=80, r=60, t=48, b=20)),
+        **_base_layout(margin=dict(l=72, r=60, t=48, b=20)),
     )
     return fig
 
@@ -812,12 +849,9 @@ def _render_top_performers(data: List[Dict]) -> None:
         era  = team["starter_era"]
         logo = TEAM_LOGOS.get(abbr, "")
         with cols[i]:
-            fb   = MLB_FALLBACK_LOGOS.get(abbr, "")
-            oerr = ("this.src='" + fb + "';this.onerror=null;") if fb else "this.style.display='none';"
-            img  = ('<img src="' + logo + '" width="40" height="40" style="object-fit:contain;" onerror="' + oerr + '">') if logo else ""
             st.markdown(
                 '<div class="perf-card">'
-                + img
+                + _logo_html(abbr, 44)
                 + '<div class="team-abbr">' + abbr + '</div>'
                 + '<div class="stat-val">' + f"{era:.2f}" + '</div>'
                 + '<div class="stat-lbl">SP ERA</div>'
@@ -1001,90 +1035,93 @@ def _render_rankings_card(rows: List[Dict], stat_key: str, stat_label: str,
         val = d.get(stat_key)
         if val is None:
             continue
-        logo_url  = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
-        card_fb   = MLB_FALLBACK_LOGOS.get(d["team"], "")
-        card_oerr = ("this.src='" + card_fb + "';this.onerror=null;") if card_fb else "this.style.display='none';"
-        rank_badge = medal_emoji[i] if i < 3 else f"#{i+1}"
-        bar_w  = _bar_pct(val)
-        bar_cl = _bar_color(i)
-        fmt_val = _fmt(val, stat_key)
 
-        logo_html = (
-            '<img src="' + logo_url + '" width="36" height="36" '
-            'style="object-fit:contain;border-radius:4px;background:rgba(255,255,255,0.06);padding:2px;" '
-            'onerror="' + card_oerr + '">'
-        ) if logo_url else ""
+        # Pre-compute everything — no conditional expressions inside the HTML string
+        logo_url   = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        card_fb    = MLB_FALLBACK_LOGOS.get(d["team"], "")
+        card_oerr  = ("this.src='" + card_fb + "';this.onerror=null;") if card_fb else "this.style.display='none';"
+        rank_badge = medal_emoji[i] if i < 3 else ("#" + str(i + 1))
+        bar_w      = _bar_pct(val)
+        bar_cl     = _bar_color(i)
+        fmt_val    = _fmt(val, stat_key)
+        team_name  = d["team"]
+        row_bg     = "rgba(29,158,117,0.12)" if i < 3 else "rgba(255,255,255,0.03)"
+        val_color  = "#34d399" if i == 0 else "#e2e8f0"
 
-        rows_html += f"""
-        <div style="display:flex;align-items:center;gap:10px;
-                    padding:7px 14px;border-radius:8px;
-                    background:{'rgba(29,158,117,0.10)' if i < 3 else 'rgba(255,255,255,0.03)'};
-                    margin-bottom:4px;">
-          <!-- rank -->
-          <div style="font-size:1.1rem;min-width:28px;text-align:center">{rank_badge}</div>
-          <!-- logo -->
-          <div style="min-width:40px;display:flex;align-items:center;justify-content:center">
-            {logo_html}
-          </div>
-          <!-- team name -->
-          <div style="min-width:36px;font-size:0.82rem;font-weight:700;
-                      letter-spacing:0.8px;color:#e2e8f0;text-transform:uppercase">
-            {d["team"]}
-          </div>
-          <!-- bar -->
-          <div style="flex:1;background:rgba(148,163,184,0.08);
-                      border-radius:4px;height:8px;overflow:hidden">
-            <div style="width:{bar_w}%;height:100%;
-                        background:{bar_cl};border-radius:4px;
-                        box-shadow:0 0 6px {bar_cl}88;
-                        transition:width 0.3s ease"></div>
-          </div>
-          <!-- value -->
-          <div style="min-width:52px;text-align:right;font-size:1.05rem;
-                      font-weight:800;font-family:'SF Mono','Fira Code',monospace;
-                      color:{'#34d399' if i==0 else '#e2e8f0'}">
-            {fmt_val}
-          </div>
-        </div>"""
+        # Logo wrapped in white pill so dark SVGs show on the dark card bg
+        if logo_url:
+            logo_html = (
+                '<span style="display:inline-flex;align-items:center;justify-content:center;'
+                'background:#fff;border-radius:50%;width:42px;height:42px;flex-shrink:0;'
+                'box-shadow:0 1px 4px rgba(0,0,0,0.2);">'
+                '<img src="' + logo_url + '" width="32" height="32" '
+                'style="display:block;object-fit:contain;" '
+                'onerror="' + card_oerr + '"></span>'
+            )
+        else:
+            logo_html = ('<span style="display:inline-flex;align-items:center;justify-content:center;'
+                         'width:42px;height:42px;font-size:0.75rem;font-weight:700;color:#94a3b8;">'
+                         + team_name + '</span>')
 
-    card_html = f"""
-    <div style="
-        background: linear-gradient(145deg, #0f1a2e 0%, #0d1b2a 100%);
-        border: 1px solid rgba(29,158,117,0.30);
-        border-radius: 16px;
-        padding: 20px 18px 16px;
-        max-width: 580px;
-        font-family: 'SF Pro Display','Helvetica Neue',sans-serif;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    ">
-      <!-- Header -->
-      <div style="display:flex;align-items:center;justify-content:space-between;
-                  margin-bottom:16px;padding-bottom:12px;
-                  border-bottom:1px solid rgba(148,163,184,0.12)">
-        <div>
-          <div style="font-size:0.68rem;letter-spacing:1.8px;color:#64748b;
-                      text-transform:uppercase;font-weight:600;margin-bottom:3px">
-            SALCI · {season} MLB SEASON
-          </div>
-          <div style="font-size:1.2rem;font-weight:800;color:#f1f5f9;
-                      letter-spacing:-0.3px">
-            {direction_label} {len(rows)} — {stat_label}
-          </div>
-        </div>
-        <div style="font-size:2rem">⚾</div>
-      </div>
-      <!-- Rows -->
-      {rows_html}
-      <!-- Footer -->
-      <div style="margin-top:12px;padding-top:10px;
-                  border-top:1px solid rgba(148,163,184,0.08);
-                  font-size:0.68rem;color:#475569;
-                  display:flex;justify-content:space-between">
-        <span>#SALCI #MLB</span>
-        <span>Data: MLB Stats API · Baseball Savant</span>
-      </div>
-    </div>
-    """
+        row = (
+            '<div style="display:flex;align-items:center;gap:10px;'
+            'padding:7px 14px;border-radius:8px;'
+            'background:' + row_bg + ';margin-bottom:4px;">'
+
+            # rank badge
+            '<div style="font-size:1.1rem;min-width:28px;text-align:center">' + rank_badge + '</div>'
+
+            # logo
+            '<div style="min-width:46px;display:flex;align-items:center;justify-content:center">'
+            + logo_html + '</div>'
+
+            # bar
+            '<div style="flex:1;background:rgba(148,163,184,0.10);border-radius:4px;height:8px;overflow:hidden">'
+            '<div style="width:' + str(bar_w) + '%;height:100%;background:' + bar_cl + ';'
+            'border-radius:4px;box-shadow:0 0 6px ' + bar_cl + '88"></div></div>'
+
+            # value
+            '<div style="min-width:56px;text-align:right;font-size:1.05rem;'
+            'font-weight:800;font-family:\'SF Mono\',\'Fira Code\',monospace;'
+            'color:' + val_color + '">' + fmt_val + '</div>'
+            '</div>'
+        )
+        rows_html += row
+
+    card_html = (
+        '<div style="'
+        'background:linear-gradient(145deg,#0f1a2e 0%,#0d1b2a 100%);'
+        'border:1px solid rgba(29,158,117,0.30);border-radius:16px;'
+        'padding:20px 18px 16px;max-width:580px;'
+        'font-family:\'SF Pro Display\',\'Helvetica Neue\',sans-serif;'
+        'box-shadow:0 8px 32px rgba(0,0,0,0.5);">'
+
+        # header
+        '<div style="display:flex;align-items:center;justify-content:space-between;'
+        'margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid rgba(148,163,184,0.12)">'
+        '<div>'
+        '<div style="font-size:0.68rem;letter-spacing:1.8px;color:#64748b;'
+        'text-transform:uppercase;font-weight:600;margin-bottom:3px">'
+        'SALCI · ' + str(season) + ' MLB SEASON</div>'
+        '<div style="font-size:1.2rem;font-weight:800;color:#f1f5f9;letter-spacing:-0.3px">'
+        + direction_label + ' ' + str(len(rows)) + ' — ' + stat_label + '</div>'
+        '</div>'
+        '<div style="font-size:2rem">⚾</div>'
+        '</div>'
+
+        # rows
+        + rows_html +
+
+        # footer
+        '<div style="margin-top:12px;padding-top:10px;'
+        'border-top:1px solid rgba(148,163,184,0.08);'
+        'font-size:0.68rem;color:#475569;'
+        'display:flex;justify-content:space-between">'
+        '<span>#SALCI #MLB</span>'
+        '<span>Data: MLB Stats API · Baseball Savant</span>'
+        '</div>'
+        '</div>'
+    )
     st.markdown(card_html, unsafe_allow_html=True)
     st.caption("💡 Take a screenshot of this card to share on social media.")
 
