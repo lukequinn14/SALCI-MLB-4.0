@@ -2423,7 +2423,17 @@ def main():
         _precomp, _source = load_todays_data(date_str)
         if _precomp is not None:
             all_pitcher_results = get_pitchers(_precomp)
-            _msg, _level = source_banner(_precomp, _source)
+            # Pass live confirmed_count so banner shows real-time count, not stale JSON count
+            _live_confirmed = sum(
+                1 for g in games
+                if lineup_status[g["game_pk"]]["home"]["confirmed"]
+                or lineup_status[g["game_pk"]]["away"]["confirmed"]
+            )
+            _msg, _level = source_banner(
+                _precomp, _source,
+                live_confirmed_count=_live_confirmed,
+                total_pitchers=len(all_pitcher_results),
+            )
             if _level == "success":
                 st.success(_msg)
             elif _level == "info":
