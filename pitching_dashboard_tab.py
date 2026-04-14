@@ -56,43 +56,59 @@ SLATE  = "rgba(148,163,184,0.15)"   # subtle grid lines
 TEXT   = "#e2e8f0"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEAM LOGOS  — dual-CDN with inline fallback
-#
-# Primary:  ESPN CDN  (500px PNG, reliable from browsers)
-# Fallback: MLB static CDN (SVG via numeric team ID — always works)
-#
-# The onerror= attribute on every <img> swaps to the MLB fallback automatically
-# if ESPN blocks the request (e.g. Streamlit Cloud CORS / hotlink protection).
+# TEAM LOGOS
+# Using ESPN CDN via 3-letter abbrev (same source as the rest of the app).
+# Every logo is wrapped in a white circle pill so dark artwork shows on any bg.
 # ─────────────────────────────────────────────────────────────────────────────
-_MLB_BASE = "https://www.mlbstatic.com/team-logos"
 
-# Primary: MLB official static SVGs — by numeric team ID.
-# These load reliably from Streamlit Cloud (official CDN, no hotlink blocking).
-# SVGs are dark-on-transparent; we wrap every logo in a white pill via CSS
-# so they're visible on both dark and light backgrounds.
+# Maps 3-letter abbrev → ESPN CDN abbrev (they're identical for MLB)
+_ABBREV_TO_ESPN: Dict[str, str] = {
+    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
+    "CHC": "chc", "CWS": "cws", "CIN": "cin", "CLE": "cle",
+    "COL": "col", "DET": "det", "HOU": "hou", "KC":  "kc",
+    "LAA": "laa", "LAD": "lad", "MIA": "mia", "MIL": "mil",
+    "MIN": "min", "NYM": "nym", "NYY": "nyy", "OAK": "oak",
+    "PHI": "phi", "PIT": "pit", "SD":  "sd",  "SF":  "sf",
+    "SEA": "sea", "STL": "stl", "TB":  "tb",  "TEX": "tex",
+    "TOR": "tor", "WSH": "wsh",
+}
+
+def get_team_logo_url(team: str) -> str:
+    """
+    Return ESPN CDN logo URL for a team.
+    Accepts 3-letter abbrev (ARI) or full name (Arizona Diamondbacks).
+    """
+    # Full-name → abbrev lookup (mirrors the app-wide MLB_TEAM_ABBREV map)
+    _FULL_TO_ABBREV = {
+        "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL",
+        "Baltimore Orioles": "BAL",    "Boston Red Sox": "BOS",
+        "Chicago Cubs": "CHC",         "Chicago White Sox": "CWS",
+        "Cincinnati Reds": "CIN",      "Cleveland Guardians": "CLE",
+        "Colorado Rockies": "COL",     "Detroit Tigers": "DET",
+        "Houston Astros": "HOU",       "Kansas City Royals": "KC",
+        "Los Angeles Angels": "LAA",   "Los Angeles Dodgers": "LAD",
+        "Miami Marlins": "MIA",        "Milwaukee Brewers": "MIL",
+        "Minnesota Twins": "MIN",      "New York Mets": "NYM",
+        "New York Yankees": "NYY",     "Oakland Athletics": "OAK",
+        "Philadelphia Phillies": "PHI","Pittsburgh Pirates": "PIT",
+        "San Diego Padres": "SD",      "San Francisco Giants": "SF",
+        "Seattle Mariners": "SEA",     "St. Louis Cardinals": "STL",
+        "Tampa Bay Rays": "TB",        "Texas Rangers": "TEX",
+        "Toronto Blue Jays": "TOR",    "Washington Nationals": "WSH",
+        "Athletics": "OAK",
+    }
+    abbrev = _FULL_TO_ABBREV.get(team, team.upper())
+    espn   = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
+    return f"https://a.espncdn.com/i/teamlogos/mlb/500/{espn}.png"
+
+# Pre-built lookup dict for direct abbrev → URL access
 TEAM_LOGOS: Dict[str, str] = {
-    "ARI": f"{_MLB_BASE}/109.svg",  "ATL": f"{_MLB_BASE}/144.svg",
-    "BAL": f"{_MLB_BASE}/110.svg",  "BOS": f"{_MLB_BASE}/111.svg",
-    "CHC": f"{_MLB_BASE}/112.svg",  "CWS": f"{_MLB_BASE}/113.svg",
-    "CIN": f"{_MLB_BASE}/114.svg",  "CLE": f"{_MLB_BASE}/115.svg",
-    "COL": f"{_MLB_BASE}/116.svg",  "DET": f"{_MLB_BASE}/117.svg",
-    "HOU": f"{_MLB_BASE}/118.svg",  "KC":  f"{_MLB_BASE}/118.svg",
-    "LAA": f"{_MLB_BASE}/108.svg",  "LAD": f"{_MLB_BASE}/119.svg",
-    "MIA": f"{_MLB_BASE}/146.svg",  "MIL": f"{_MLB_BASE}/158.svg",
-    "MIN": f"{_MLB_BASE}/142.svg",  "NYM": f"{_MLB_BASE}/121.svg",
-    "NYY": f"{_MLB_BASE}/147.svg",  "OAK": f"{_MLB_BASE}/133.svg",
-    "PHI": f"{_MLB_BASE}/143.svg",  "PIT": f"{_MLB_BASE}/134.svg",
-    "SD":  f"{_MLB_BASE}/135.svg",  "SF":  f"{_MLB_BASE}/137.svg",
-    "SEA": f"{_MLB_BASE}/136.svg",  "STL": f"{_MLB_BASE}/138.svg",
-    "TB":  f"{_MLB_BASE}/139.svg",  "TEX": f"{_MLB_BASE}/140.svg",
-    "TOR": f"{_MLB_BASE}/141.svg",  "WSH": f"{_MLB_BASE}/120.svg",
+    abbrev: f"https://a.espncdn.com/i/teamlogos/mlb/500/{espn}.png"
+    for abbrev, espn in _ABBREV_TO_ESPN.items()
 }
 
-# Fallback: same CDN, different path format (used if primary 404s)
-MLB_FALLBACK_LOGOS: Dict[str, str] = {
-    k: v.replace("/team-logos/", "/team-logos/team/")
-    for k, v in TEAM_LOGOS.items()
-}
+# No separate fallback needed — ESPN URLs are consistent; onerror hides gracefully
+MLB_FALLBACK_LOGOS: Dict[str, str] = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CUSTOM CSS  (injected once per render)
@@ -443,18 +459,28 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
     values = [d[stat_key] for d in subset]
     logos  = [d.get("logo_url") or TEAM_LOGOS.get(d["team"], "") for d in subset]
 
-    # Medal colouring: gold / silver / bronze for top 3, then faded
-    medal   = ["#FFD700", "#C0C0C0", "#CD7F32"]
-    if best_first:
-        bar_colors = [
-            (medal[i] if i < 3 else "#3a7d6b")
-            for i in range(len(subset))
-        ]
-    else:
-        bar_colors = [
-            (medal[i] if i < 3 else "#8b3a1e")
-            for i in range(len(subset))
-        ]
+    # Green → Red gradient: rank 1 = green, rank N = red.
+    # If best_first: #1 is green (best ERA), #N is red (worst).
+    # If not best_first: #1 is red (worst ERA), #N is green (best).
+    def _rank_color(rank_idx: int, total: int) -> str:
+        """Interpolate green (#1D9E75) → amber (#BA7517) → red (#D85A30)."""
+        t = rank_idx / max(total - 1, 1)   # 0.0 = best, 1.0 = worst
+        if not best_first:
+            t = 1 - t                       # flip for worst-first lists
+        # Green → Amber → Red (two-segment lerp)
+        if t < 0.5:
+            s = t * 2          # 0→1 across first half
+            r = int(29  + s * (186 - 29))
+            g = int(158 + s * (117 - 158))
+            b = int(117 + s * (23  - 117))
+        else:
+            s = (t - 0.5) * 2  # 0→1 across second half
+            r = int(186 + s * (216 - 186))
+            g = int(117 + s * (90  - 117))
+            b = int(23  + s * (48  - 23))
+        return f"rgb({r},{g},{b})"
+
+    bar_colors = [_rank_color(i, len(subset)) for i in range(len(subset))]
 
     suffix = "%" if "pct" in stat_key else ""
     row_h  = 52          # px per row
@@ -496,7 +522,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
             layer    = "above",
         ))
 
-    # Rank medal annotations on the left of each bar
+    # Rank number annotations to the left of each bar
     rank_annotations = []
     for i, team in enumerate(teams):
         rank_annotations.append(dict(
@@ -507,8 +533,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
             text      = f"<b>#{i+1}</b>",
             showarrow = False,
             xanchor   = "right",
-            font      = dict(size=10,
-                             color=medal[i] if i < 3 else "rgba(148,163,184,0.6)"),
+            font      = dict(size=10, color="rgba(148,163,184,0.75)"),
             xshift    = -4,
         ))
 
@@ -992,10 +1017,10 @@ def _render_rankings_card(rows: List[Dict], stat_key: str, stat_label: str,
                            best_first: bool, season: int) -> None:
     """
     Renders a screenshot-ready HTML card — dark background, team logos,
-    medal colouring, SALCI branding. No external dependencies beyond st.markdown.
+    rank numbers (#1–#N), green→red gradient bars, SALCI branding.
+    No external dependencies beyond st.markdown.
 
-    Design: vertical stack of rows, each row = rank medal + logo + team name
-    + stat value + a proportional bar.
+    Design: vertical stack of rows, each row = rank # + logo pill + stat value + bar.
     """
     if not rows:
         return
@@ -1008,27 +1033,35 @@ def _render_rankings_card(rows: List[Dict], stat_key: str, stat_label: str,
     val_min = min(values)
     val_range = val_max - val_min or 1
 
-    medal_emoji = ["🥇", "🥈", "🥉"]
     direction_label = "Best" if best_first else "Worst"
     suffix = "%" if "pct" in stat_key else ""
+    n_rows = len([d for d in rows if d.get(stat_key) is not None])
 
     def _bar_pct(v):
-        # Bars show relative magnitude. For lower-is-better stats, invert.
+        """Bar width proportional to rank quality (best = widest)."""
         if val_range == 0:
             return 60
-        if best_first:  # lower is better → shorter bar = worse
+        if best_first:  # lower-is-better: best (smallest val) gets widest bar
             return max(8, int((1 - (v - val_min) / val_range) * 88 + 12))
-        else:           # higher is better → longer bar = worse
+        else:           # higher-is-better: largest val gets widest bar
             return max(8, int((v - val_min) / val_range * 88 + 12))
 
-    bar_color_good = "#1D9E75"
-    bar_color_ok   = "#378ADD"
-    bar_color_warn = "#D85A30"
-
-    def _bar_color(i):
-        if i < 3:
-            return bar_color_good if best_first else bar_color_warn
-        return bar_color_ok
+    def _card_bar_color(rank_idx: int) -> str:
+        """Green (#1) → Amber → Red (#N), same gradient as chart."""
+        t = rank_idx / max(n_rows - 1, 1)
+        if not best_first:
+            t = 1 - t
+        if t < 0.5:
+            s = t * 2
+            r = int(29  + s * (186 - 29))
+            g = int(158 + s * (117 - 158))
+            b = int(117 + s * (23  - 117))
+        else:
+            s = (t - 0.5) * 2
+            r = int(186 + s * (216 - 186))
+            g = int(117 + s * (90  - 117))
+            b = int(23  + s * (48  - 23))
+        return f"rgb({r},{g},{b})"
 
     rows_html = ""
     for i, d in enumerate(rows):
@@ -1040,12 +1073,12 @@ def _render_rankings_card(rows: List[Dict], stat_key: str, stat_label: str,
         logo_url   = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
         card_fb    = MLB_FALLBACK_LOGOS.get(d["team"], "")
         card_oerr  = ("this.src='" + card_fb + "';this.onerror=null;") if card_fb else "this.style.display='none';"
-        rank_badge = medal_emoji[i] if i < 3 else ("#" + str(i + 1))
+        rank_badge = "#" + str(i + 1)
         bar_w      = _bar_pct(val)
-        bar_cl     = _bar_color(i)
+        bar_cl     = _card_bar_color(i)
         fmt_val    = _fmt(val, stat_key)
         team_name  = d["team"]
-        row_bg     = "rgba(29,158,117,0.12)" if i < 3 else "rgba(255,255,255,0.03)"
+        row_bg     = "rgba(29,158,117,0.10)" if i == 0 else "rgba(255,255,255,0.03)"
         val_color  = "#34d399" if i == 0 else "#e2e8f0"
 
         # Logo wrapped in white pill so dark SVGs show on the dark card bg
