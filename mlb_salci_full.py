@@ -1499,6 +1499,28 @@ def create_k_projection_chart(pitcher_results: List[Dict]) -> Optional[go.Figure
     
     return fig
 
+
+
+# ── Team logo helpers ─────────────────────────────────────────────────────────
+MLB_TEAM_ABBREV = {
+    "Arizona Diamondbacks": "ari", "Atlanta Braves": "atl", "Baltimore Orioles": "bal",
+    "Boston Red Sox": "bos", "Chicago Cubs": "chc", "Chicago White Sox": "cws",
+    "Cincinnati Reds": "cin", "Cleveland Guardians": "cle", "Colorado Rockies": "col",
+    "Detroit Tigers": "det", "Houston Astros": "hou", "Kansas City Royals": "kc",
+    "Los Angeles Angels": "laa", "Los Angeles Dodgers": "lad", "Miami Marlins": "mia",
+    "Milwaukee Brewers": "mil", "Minnesota Twins": "min", "New York Mets": "nym",
+    "New York Yankees": "nyy", "Oakland Athletics": "oak", "Philadelphia Phillies": "phi",
+    "Pittsburgh Pirates": "pit", "San Diego Padres": "sd", "San Francisco Giants": "sf",
+    "Seattle Mariners": "sea", "St. Louis Cardinals": "stl", "Tampa Bay Rays": "tb",
+    "Texas Rangers": "tex", "Toronto Blue Jays": "tor", "Washington Nationals": "was",
+    "Athletics": "oak",
+}
+
+def get_team_logo_url(team_name: str) -> str:
+    abbrev = MLB_TEAM_ABBREV.get(team_name, "mlb")
+    return f"https://a.espncdn.com/i/teamlogos/mlb/500/{abbrev}.png"
+
+
 # ----------------------------
 # UI Rendering Functions
 # ----------------------------
@@ -1675,19 +1697,17 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
 
 def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: Dict):
     """
-    Render a head-to-head matchup card for a single game.
-    Uses split native Streamlit calls to avoid large HTML block rendering issues.
+    Render a head-to-head matchup card. Home team always on the right.
     """
-    game_pk = game["game_pk"]
-    home_team = game.get("home_team", "Home")
-    away_team = game.get("away_team", "Away")
+    game_pk    = game["game_pk"]
+    home_team  = game.get("home_team", "Home")
+    away_team  = game.get("away_team", "Away")
 
-    # Find both pitchers for this game
     home_pitcher = next((p for p in pitcher_results if p["game_pk"] == game_pk and p["team"] == home_team), None)
     away_pitcher = next((p for p in pitcher_results if p["game_pk"] == game_pk and p["team"] == away_team), None)
 
     if not home_pitcher or not away_pitcher:
-        return  # Can't build card without both pitchers
+        return
 
     home_salci      = home_pitcher.get("salci", 0)
     away_salci      = away_pitcher.get("salci", 0)
@@ -1697,17 +1717,15 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     away_hand       = away_pitcher.get("pitcher_hand", "R")
     home_exp        = home_pitcher.get("expected", "--")
     away_exp        = away_pitcher.get("expected", "--")
-    home_prof       = home_pitcher.get("profile_type", "") or ""
-    away_prof       = away_pitcher.get("profile_type", "") or ""
     home_floor      = home_pitcher.get("floor")
     away_floor      = away_pitcher.get("floor")
     home_floor_conf = home_pitcher.get("floor_confidence")
     away_floor_conf = away_pitcher.get("floor_confidence")
+    home_logo       = get_team_logo_url(home_team)
+    away_logo       = get_team_logo_url(away_team)
 
-    # ── Colour helpers ────────────────────────────────────────────────────────
     def _comp_color(score, is_100_scale=True):
-        if score is None:
-            return "#9ca3af"
+        if score is None: return "#9ca3af"
         if is_100_scale:
             if score >= 115: return "#10b981"
             if score >= 105: return "#22c55e"
@@ -1720,30 +1738,27 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
             return "#ef4444"
 
     def _bar_pct(score, is_100_scale=True):
-        if not score:
-            return 0
+        if not score: return 0
         if is_100_scale:
             return round(min(100, max(0, (score - 70) * 2)), 1)
         return round(min(100, max(0, float(score))), 1)
 
-    # ── Edge logic ────────────────────────────────────────────────────────────
-    delta = home_salci - away_salci
+    delta      = home_salci - away_salci
     if abs(delta) <= 4:
-        edge_label = "⚖️ Even Matchup"
+        edge_label = "Even Matchup"
         edge_color = "#eab308"
         conf_label = "PUSH"
     elif delta > 0:
-        edge_label = home_team + " Edge"
+        edge_label = f"{home_team} Edge"
         edge_color = "#22c55e"
-        conf_label = "HOME"
+        conf_label = "HOME ADVANTAGE"
     else:
-        edge_label = away_team + " Edge"
+        edge_label = f"{away_team} Edge"
         edge_color = "#ef4444"
-        conf_label = "AWAY"
+        conf_label = "AWAY ADVANTAGE"
 
     confidence = min(int(abs(delta) * 4), 100)
 
-    # Hot-hitter counts
     def _hot_count(side):
         lineup = lineup_status.get(game_pk, {}).get(side, {}).get("lineup", [])
         return sum(1 for p in lineup if p.get("is_hot") or p.get("woba", 0) > 0.350)
@@ -1753,238 +1768,119 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     home_lineup_sz = len(lineup_status.get(game_pk, {}).get("home", {}).get("lineup", []))
     away_lineup_sz = len(lineup_status.get(game_pk, {}).get("away", {}).get("lineup", []))
 
-    prof_emoji_map = {
-        "ELITE": "⚡", "STUFF-DOMINANT": "🔥", "LOCATION-DOMINANT": "🎯",
-        "BALANCED-PLUS": "💪", "BALANCED": "⚖️", "ONE-TOOL": "📊",
-        "LIMITED": "⚠️", "N/A": "",
-    }
-
     home_salci_color = get_salci_color(home_salci)
     away_salci_color = get_salci_color(away_salci)
     _, home_emoji, _ = get_rating(home_salci)
     _, away_emoji, _ = get_rating(away_salci)
 
-
-    # ── OUTER CARD CONTAINER START ───────────────────────────────────────────
+    # ── CARD CONTAINER ────────────────────────────────────────────────────────
     st.markdown(
-        "<div style='background:#0f172a; border-radius:16px; padding:14px; margin-bottom:18px; border:1px solid #1f2937;'>",
-        unsafe_allow_html=True
-    )
-    # ── Header ────────────────────────────────────────────────────────────────
-    st.markdown(
-        "<div style='background:linear-gradient(135deg,#1e3a5f,#2e5a8f);"
-        "border-radius:14px 14px 0 0;padding:10px 16px;text-align:center;'>"
-        "<span style='color:#93c5fd;font-size:0.85rem;font-weight:600;letter-spacing:1px;'>"
-        "&#x2694;&#xFE0F; HEAD-TO-HEAD MATCHUP"
-        "</span></div>",
+        "<div style='background:#0f172a;border-radius:16px;padding:0;margin-bottom:20px;"
+        "border:1px solid #1f2937;overflow:hidden;'>",
         unsafe_allow_html=True,
     )
 
-    # ── Three-column body ─────────────────────────────────────────────────────
+    # ── HEADER: Away Logo + Name  @  Home Name + Logo ─────────────────────────
+    st.markdown(
+        f"<div style='background:linear-gradient(135deg,#0f2744,#1a3a6b);"
+        f"padding:12px 20px;display:flex;align-items:center;justify-content:space-between;'>"
+        f"  <div style='display:flex;align-items:center;gap:10px;'>"
+        f"    <img src='{away_logo}' style='height:40px;width:40px;object-fit:contain;' onerror=\"this.style.display='none'\"/>"
+        f"    <span style='font-size:1rem;font-weight:700;color:#e2e8f0;'>{away_team}</span>"
+        f"    <span style='font-size:0.75rem;color:#94a3b8;font-weight:400;'>AWAY</span>"
+        f"  </div>"
+        f"  <span style='font-size:0.7rem;color:#64748b;font-weight:600;letter-spacing:2px;'>VS</span>"
+        f"  <div style='display:flex;align-items:center;gap:10px;'>"
+        f"    <span style='font-size:0.75rem;color:#94a3b8;font-weight:400;'>HOME</span>"
+        f"    <span style='font-size:1rem;font-weight:700;color:#e2e8f0;'>{home_team}</span>"
+        f"    <img src='{home_logo}' style='height:40px;width:40px;object-fit:contain;' onerror=\"this.style.display='none'\"/>"
+        f"  </div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── THREE-COLUMN BODY ─────────────────────────────────────────────────────
     col_away, col_vs, col_home = st.columns([5, 3, 5])
 
-    # ════════════════════════════════════════════════════════════════════════
-    # AWAY pitcher panel — one small st.markdown per logical section
-    # ════════════════════════════════════════════════════════════════════════
-    with col_away:
-        # border-open div
+    def _render_pitcher_panel(pitcher, hand, salci, salci_color, grade, emoji,
+                               exp, floor, floor_conf, hot_count, lineup_sz, logo_url, team):
+        is_statcast  = pitcher.get("is_statcast", False)
+        badge_txt    = "Statcast" if is_statcast else "Stats API"
+        badge_color  = "#10b981" if is_statcast else "#475569"
+        prof         = pitcher.get("profile_type", "") or ""
+        prof_clean   = prof if prof not in ("BALANCED", "N/A", "") else ""
+
         st.markdown(
-            "<div style='background:#020617; border:1px solid #374151; border-radius:12px;"
-            "padding:14px; height:100%;'>",
+            f"<div style='background:#020617;border:1px solid #1e293b;border-radius:0;"
+            f"padding:16px;'>",
             unsafe_allow_html=True,
         )
 
-        # Name + hand
-        away_badge_txt = "🎯 Statcast" if away_pitcher.get("is_statcast") else "📊 Stats API"
-        away_badge_bg  = "#10b981"     if away_pitcher.get("is_statcast") else "#6b7280"
-        away_pe        = prof_emoji_map.get(away_prof, "")
-        away_prof_span = (
-            f" &nbsp;<span style='font-size:0.7rem;color:#a78bfa;'>{away_pe} {away_prof}</span>"
-            if away_pe and away_prof not in ("BALANCED", "N/A", "") else ""
-        )
-
+        # Pitcher name row
         st.markdown(
-            f"<div style='font-size:1.05rem;font-weight:700;margin-bottom:2px;'>"
-            f"{away_pitcher['pitcher']} ({away_hand}HP)</div>"
-            f"<div style='font-size:0.8rem;color:#9ca3af;margin-bottom:6px;'>"
-            f"{away_team} &nbsp;&#183;&nbsp; "
-            f"<span style='font-size:0.65rem;background:{away_badge_bg};color:white;"
-            f"padding:2px 5px;border-radius:4px;'>{away_badge_txt}</span>"
-            f"{away_prof_span}</div>",
+            f"<div style='font-size:1.1rem;font-weight:700;color:#f1f5f9;margin-bottom:2px;'>"
+            f"{pitcher['pitcher']} <span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>({hand}HP)</span>"
+            f"</div>"
+            f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:10px;'>"
+            f"  <span style='font-size:0.7rem;background:{badge_color};color:white;"
+            f"  padding:2px 6px;border-radius:4px;font-weight:600;'>{badge_txt}</span>"
+            f"  {'<span style=\"font-size:0.7rem;color:#a78bfa;\">' + prof_clean + '</span>' if prof_clean else ''}"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
         # SALCI score
         st.markdown(
-            f"<div style='font-size:2.2rem;font-weight:900;color:{away_salci_color};"
-            f"line-height:1;margin-bottom:2px;'>{away_salci:.1f}"
-            f"<span style='font-size:1rem;margin-left:8px;'>{away_emoji} {away_grade}</span></div>",
+            f"<div style='font-size:2.4rem;font-weight:900;color:{salci_color};"
+            f"line-height:1;letter-spacing:-1px;'>{salci:.1f}"
+            f"<span style='font-size:1rem;font-weight:600;color:#94a3b8;margin-left:8px;'>"
+            f"{emoji} {grade}</span></div>",
             unsafe_allow_html=True,
         )
 
-        # Expected / floor
+        # Expected + floor
         st.markdown(
-            f"<div style='font-size:0.8rem;margin-top:4px;'><b>Exp Ks:</b> {away_exp}</div>",
+            f"<div style='font-size:0.82rem;color:#cbd5e1;margin-top:6px;'>"
+            f"Exp Ks: <strong style='color:#f1f5f9;'>{exp}</strong></div>",
             unsafe_allow_html=True,
         )
-        if away_floor is not None:
+        if floor is not None:
             st.markdown(
-                f"<div style='font-size:0.75rem;color:#10b981;font-weight:600;'>"
-                f"Floor: {away_floor} Ks ({away_floor_conf}% conf)</div>",
-                unsafe_allow_html=True,
-            )
-
-        # K-lines — one pill per column
-        away_klines = away_pitcher.get("k_lines", {}) or away_pitcher.get("lines", {})
-        if away_klines:
-            k_cols = st.columns(min(4, len(away_klines)))
-            for i, (kv, prob) in enumerate(sorted(away_klines.items())[:4]):
-                kc = "#22c55e" if prob >= 70 else "#eab308" if prob >= 50 else "#ef4444"
-                with k_cols[i]:
-                    st.markdown(
-                        f"<div style='text-align:center;'>"
-                        f"<div style='font-size:0.6rem;color:#888;'>{kv}+</div>"
-                        f"<div style='font-size:0.85rem;font-weight:bold;color:{kc};'>{prob}%</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-
-        # Component bars — one per column
-        st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
-        comp_cols = st.columns(4)
-        components = [
-            ("⚡ STUFF",  away_pitcher.get("stuff_score"),    True),
-            ("🎯 MATCH",  away_pitcher.get("matchup_score"),  False),
-            ("📊 WORK",   away_pitcher.get("workload_score"), False),
-            ("📍 LOC",    away_pitcher.get("location_score"), True),
-        ]
-        for i, (lbl, score, is100) in enumerate(components):
-            with comp_cols[i]:
-                if score is None:
-                    st.markdown(
-                        f"<div style='text-align:center;color:#aaa;font-size:0.7rem;'>"
-                        f"{lbl}<br>--</div>",
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    cc  = _comp_color(score, is100)
-                    pct = _bar_pct(score, is100)
-                    st.markdown(
-                        f"<div style='text-align:center;'>"
-                        f"<div style='font-size:0.6rem;color:#888;'>{lbl}</div>"
-                        f"<div style='font-size:0.95rem;font-weight:bold;color:{cc};'>{int(score)}</div>"
-                        f"<div style='background:#e5e7eb;border-radius:4px;height:5px;margin-top:2px;'>"
-                        f"<div style='width:{pct}%;background:{cc};border-radius:4px;height:100%;'>"
-                        f"</div></div></div>",
-                        unsafe_allow_html=True,
-                    )
-
-        # Hot hitters footer
-        st.caption(f"🔥 Hot opp. hitters: {home_hot}  |  📋 Opp. lineup: {home_lineup_sz}")
-
-        # border-close div
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # CENTER edge panel
-    # ════════════════════════════════════════════════════════════════════════
-    with col_vs:
-        st.markdown(
-            f"""
-            <div style='text-align:center; padding-top:20px;'>
-                <div style='font-size:0.75rem; color:#9ca3af; margin-bottom:6px;'>MATCHUP EDGE</div>
-                <div style='font-size:1.4rem; font-weight:700; color:{edge_color};'>{edge_label}</div>
-                <div style='font-size:0.9rem; color:#d1d5db;'>Δ {delta:.1f}</div>
-                <div style='margin-top:10px; font-size:0.7rem; color:#6b7280;'>Confidence</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    
-        st.progress(confidence / 100)
-        
-
-    # ════════════════════════════════════════════════════════════════════════
-    # HOME pitcher panel
-    # ════════════════════════════════════════════════════════════════════════
-    with col_home:
-        # border-open div
-        st.markdown(
-            "<div style='background:#020617; border:1px solid #374151; border-radius:12px;"
-            "padding:14px; height:100%;'>",
-            unsafe_allow_html=True,
-        )
-
-        # Name + hand
-        home_badge_txt = "🎯 Statcast" if home_pitcher.get("is_statcast") else "📊 Stats API"
-        home_badge_bg  = "#10b981"     if home_pitcher.get("is_statcast") else "#6b7280"
-        home_pe        = prof_emoji_map.get(home_prof, "")
-        home_prof_span = (
-            f" &nbsp;<span style='font-size:0.7rem;color:#a78bfa;'>{home_pe} {home_prof}</span>"
-            if home_pe and home_prof not in ("BALANCED", "N/A", "") else ""
-        )
-
-        st.markdown(
-            f"<div style='font-size:1.05rem;font-weight:700;margin-bottom:2px;'>"
-            f"{home_pitcher['pitcher']} ({home_hand}HP)</div>"
-            f"<div style='font-size:0.8rem;color:#9ca3af;margin-bottom:6px;'>"
-            f"{home_team} &nbsp;&#183;&nbsp; "
-            f"<span style='font-size:0.65rem;background:{home_badge_bg};color:white;"
-            f"padding:2px 5px;border-radius:4px;'>{home_badge_txt}</span>"
-            f"{home_prof_span}</div>",
-            unsafe_allow_html=True,
-        )
-
-        # SALCI score
-        st.markdown(
-            f"<div style='font-size:2.2rem;font-weight:900;color:{home_salci_color};"
-            f"line-height:1;margin-bottom:2px;'>{home_salci:.1f}"
-            f"<span style='font-size:1rem;margin-left:8px;'>{home_emoji} {home_grade}</span></div>",
-            unsafe_allow_html=True,
-        )
-
-        # Expected / floor
-        st.markdown(
-            f"<div style='font-size:0.8rem;margin-top:4px;'><b>Exp Ks:</b> {home_exp}</div>",
-            unsafe_allow_html=True,
-        )
-        if home_floor is not None:
-            st.markdown(
-                f"<div style='font-size:0.75rem;color:#10b981;font-weight:600;'>"
-                f"Floor: {home_floor} Ks ({home_floor_conf}% conf)</div>",
+                f"<div style='font-size:0.75rem;color:#10b981;font-weight:600;margin-bottom:6px;'>"
+                f"Floor: {floor} Ks ({floor_conf}% conf)</div>",
                 unsafe_allow_html=True,
             )
 
         # K-lines
-        home_klines = home_pitcher.get("k_lines", {}) or home_pitcher.get("lines", {})
-        if home_klines:
-            k_cols = st.columns(min(4, len(home_klines)))
-            for i, (kv, prob) in enumerate(sorted(home_klines.items())[:4]):
+        klines = pitcher.get("k_lines", {}) or pitcher.get("lines", {})
+        if klines:
+            k_cols = st.columns(min(4, len(klines)))
+            for i, (kv, prob) in enumerate(sorted(klines.items())[:4]):
                 kc = "#22c55e" if prob >= 70 else "#eab308" if prob >= 50 else "#ef4444"
                 with k_cols[i]:
                     st.markdown(
                         f"<div style='text-align:center;'>"
-                        f"<div style='font-size:0.6rem;color:#888;'>{kv}+</div>"
-                        f"<div style='font-size:0.85rem;font-weight:bold;color:{kc};'>{prob}%</div>"
+                        f"<div style='font-size:0.6rem;color:#64748b;font-weight:600;'>{kv}+</div>"
+                        f"<div style='font-size:0.9rem;font-weight:700;color:{kc};'>{prob}%</div>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
 
-        # Component bars
-        st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+        # Component scores
+        st.markdown("<div style='margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;'></div>",
+                    unsafe_allow_html=True)
         comp_cols = st.columns(4)
         components = [
-            ("⚡ STUFF",  home_pitcher.get("stuff_score"),    True),
-            ("🎯 MATCH",  home_pitcher.get("matchup_score"),  False),
-            ("📊 WORK",   home_pitcher.get("workload_score"), False),
-            ("📍 LOC",    home_pitcher.get("location_score"), True),
+            ("STUFF",   pitcher.get("stuff_score"),    True),
+            ("MATCH",   pitcher.get("matchup_score"),  False),
+            ("WORK",    pitcher.get("workload_score"), False),
+            ("LOC",     pitcher.get("location_score"), True),
         ]
         for i, (lbl, score, is100) in enumerate(components):
             with comp_cols[i]:
                 if score is None:
                     st.markdown(
-                        f"<div style='text-align:center;color:#aaa;font-size:0.7rem;'>"
-                        f"{lbl}<br>--</div>",
+                        f"<div style='text-align:center;color:#475569;font-size:0.65rem;'>{lbl}<br>—</div>",
                         unsafe_allow_html=True,
                     )
                 else:
@@ -1992,36 +1888,65 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                     pct = _bar_pct(score, is100)
                     st.markdown(
                         f"<div style='text-align:center;'>"
-                        f"<div style='font-size:0.6rem;color:#888;'>{lbl}</div>"
-                        f"<div style='font-size:0.95rem;font-weight:bold;color:{cc};'>{int(score)}</div>"
-                        f"<div style='background:#e5e7eb;border-radius:4px;height:5px;margin-top:2px;'>"
-                        f"<div style='width:{pct}%;background:{cc};border-radius:4px;height:100%;'>"
-                        f"</div></div></div>",
+                        f"<div style='font-size:0.58rem;color:#64748b;font-weight:600;letter-spacing:0.5px;'>{lbl}</div>"
+                        f"<div style='font-size:1rem;font-weight:700;color:{cc};'>{int(score)}</div>"
+                        f"<div style='background:#1e293b;border-radius:3px;height:4px;margin-top:3px;'>"
+                        f"<div style='width:{pct}%;background:{cc};border-radius:3px;height:100%;'></div>"
+                        f"</div></div>",
                         unsafe_allow_html=True,
                     )
 
-        # Hot hitters footer
-        st.caption(f"🔥 Hot opp. hitters: {away_hot}  |  📋 Opp. lineup: {away_lineup_sz}")
-
-        # border-close div
+        # Footer meta
+        st.markdown(
+            f"<div style='margin-top:10px;font-size:0.7rem;color:#475569;'>"
+            f"Opp. hot hitters: {hot_count} &nbsp;|&nbsp; Opp. lineup: {lineup_sz}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Footer bar ────────────────────────────────────────────────────────────
+    with col_away:
+        _render_pitcher_panel(
+            away_pitcher, away_hand, away_salci, away_salci_color, away_grade, away_emoji,
+            away_exp, away_floor, away_floor_conf, home_hot, home_lineup_sz,
+            away_logo, away_team,
+        )
+
+    with col_vs:
+        st.markdown(
+            f"<div style='background:#020617;border-left:1px solid #1e293b;"
+            f"border-right:1px solid #1e293b;padding:24px 12px;text-align:center;height:100%;'>"
+            f"<div style='font-size:0.62rem;color:#475569;letter-spacing:2px;font-weight:700;"
+            f"margin-bottom:8px;'>SALCI EDGE</div>"
+            f"<div style='font-size:1.25rem;font-weight:800;color:{edge_color};"
+            f"line-height:1.2;margin-bottom:6px;'>{edge_label}</div>"
+            f"<div style='font-size:0.85rem;color:#64748b;margin-bottom:16px;'>"
+            f"&#916; {delta:+.1f}</div>"
+            f"<div style='font-size:0.58rem;color:#475569;letter-spacing:1px;margin-bottom:4px;'>CONFIDENCE</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        st.progress(confidence / 100)
+
+    with col_home:
+        _render_pitcher_panel(
+            home_pitcher, home_hand, home_salci, home_salci_color, home_grade, home_emoji,
+            home_exp, home_floor, home_floor_conf, away_hot, away_lineup_sz,
+            home_logo, home_team,
+        )
+
+    # ── FOOTER ────────────────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='background:rgba(30,58,95,0.25);border:1px solid #1e3a5f;"
-        f"border-radius:0 0 14px 14px;padding:8px 16px;"
-        f"display:flex;justify-content:space-between;align-items:center;'>"
-        f"<span style='font-size:0.7rem;color:#6b7280;'>&#x26BE; {away_team} @ {home_team}</span>"
-        f"<span style='font-size:0.75rem;font-weight:700;color:{edge_color};'>{conf_label} ADVANTAGE</span>"
-        f"<span style='font-size:0.7rem;color:#6b7280;'>SALCI v5.1</span>"
-        f"</div>",
+        f"<div style='background:#0a1628;border-top:1px solid #1e293b;"
+        f"padding:8px 20px;display:flex;justify-content:space-between;align-items:center;'>"
+        f"<span style='font-size:0.7rem;color:#475569;'>{away_team} @ {home_team}</span>"
+        f"<span style='font-size:0.75rem;font-weight:700;color:{edge_color};'>{conf_label}</span>"
+        f"<span style='font-size:0.7rem;color:#475569;'>SALCI v{SALCI_VERSION}</span>"
+        f"</div>"
+        f"</div>",  # closes outer card container
         unsafe_allow_html=True,
     )
-    st.markdown("---")
-
-    # ── CLOSE CARD ───────────────────────────────────────────────────────────
-    # ── OUTER CARD CONTAINER END ─────────────────────────────────────────────
-st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
 
 
 def render_compact_summary(pitcher_results: List[Dict]):
