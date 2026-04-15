@@ -51,7 +51,7 @@ TEXT   = "#e2e8f0"
 
 # ESPN slug map — every abbreviation maps to its verified ESPN CDN slug.
 # CWS must be "chw" (ESPN uses CHW, not CWS). All others are lowercase abbrev.
-_ABBREV_TO_ESPN = {
+'''_ABBREV_TO_ESPN = {
     "ARI": ["ari", "az"], "ATL": ["atl"], "BAL": ["bal"], "BOS": ["bos"],
     "CHC": ["chc"], "CWS": ["chw"], "CIN": ["cin"],          # CWS → chw on ESPN
     "CLE": ["cle"], "COL": ["col"], "DET": ["det"], "HOU": "hou"],
@@ -60,7 +60,7 @@ _ABBREV_TO_ESPN = {
     "OAK": ["oak"], "PHI": ["phi"], "PIT": ["pit"], "SD":  "sd"],
     "SF":  ["sf"],  "SEA": ["sea"], "STL": ["stl"],
     "TB":  ["tb"],  "TEX": ["tex"], "TOR": ["tor"], "WSH": ["wsh"],
-}
+}'''
 
 MLB_TEAM_ABBREV = {
     "Arizona Diamondbacks": "ari", "Atlanta Braves": "atl", "Baltimore Orioles": "bal",
@@ -76,7 +76,7 @@ MLB_TEAM_ABBREV = {
     "Athletics": "oak",
 }
 
-_FULL_TO_ABBREV: Dict[str, str] = {
+'''_FULL_TO_ABBREV: Dict[str, str] = {
     "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL",
     "Baltimore Orioles": "BAL", "Boston Red Sox": "BOS",
     "Chicago Cubs": "CHC", "Chicago White Sox": "CWS",
@@ -93,7 +93,7 @@ _FULL_TO_ABBREV: Dict[str, str] = {
     "Tampa Bay Rays": "TB", "Texas Rangers": "TEX",
     "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH",
     "Athletics": "OAK",
-}
+}'''
 
 # Teams whose PRIMARY logo is too dark to read on a dark dashboard background.
 # ESPN hosts a "/500-dark/" variant that contains a lighter, high-contrast
