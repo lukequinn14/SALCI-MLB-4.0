@@ -50,14 +50,14 @@ TEXT   = "#e2e8f0"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "arizona", "ATL": "atl", "BAL": "bal", "BOS": "bos",
-    "CHC": "chicago-cubs", "CWS": "chicago-white-sox", "CIN": "cin",
+    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
+    "CHC": "chc", "CWS": "cws", "CIN": "cin",
     "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
-    "KC":  "kansas-city", "LAA": "laa", "LAD": "lad", "MIA": "mia",
+    "KC":  "kc", "LAA": "laa", "LAD": "lad", "MIA": "mia",
     "MIL": "mil", "MIN": "min", "NYM": "nym", "NYY": "nyy",
-    "OAK": "oak", "PHI": "phi", "PIT": "pit", "SD":  "san-diego",
-    "SF":  "san-francisco", "SEA": "sea", "STL": "st-louis",
-    "TB":  "tampa-bay", "TEX": "tex", "TOR": "tor", "WSH": "washington",
+    "OAK": "oak", "PHI": "phi", "PIT": "pit", "SD":  "sd",
+    "SF":  "sf", "SEA": "sea", "STL": "stl",
+    "TB":  "tb", "TEX": "tex", "TOR": "tor", "WSH": "wsh",
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
@@ -82,8 +82,20 @@ _FULL_TO_ABBREV: Dict[str, str] = {
 def get_team_logo_url(team: str) -> str:
     """Robustly returns the high-res ESPN logo URL."""
     if not team: return ""
-    abbrev = _FULL_TO_ABBREV.get(team, team.upper())
+    # Standardize team name to handle variations
+    team_clean = team.strip()
+    abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
+    # If abbrev is still long, it might be a team name not in our list
+    if len(abbrev) > 4 and " " in abbrev:
+        # Try to find if any key in _FULL_TO_ABBREV is in the team name
+        for full_name, short in _FULL_TO_ABBREV.items():
+            if full_name in team_clean or team_clean in full_name:
+                abbrev = short
+                break
+    
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
+    # Final safety check for common variations
+    if slug == "cws": slug = "chw" # Both often work, but CHW is very common for ESPN
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
