@@ -105,20 +105,21 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     if not team:
         return ""
     
-    # Clean and resolve the abbreviation
     team_clean = team.strip()
+    # 1. Resolve Abbreviation
     abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
     
-    # Get the slug (e.g., "ari" for Arizona)
+    # 2. Get the correct CDN slug
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    # Build the URL based on background needs
+    # 3. Path Selection
+    # If dark_bg is True, we attempt to use the '500-dark' variant for better contrast.
+    # This directory contains white-bordered or lightened versions of the logos.
     if dark_bg:
-        # Use the '500-dark' path for high-contrast versions
-        return f"https://espncdn.com{slug}.png"
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
     
-    # Default high-quality scoreboard version
-    return f"https://espncdn.com{slug}.png"
+    # Standard fallback
+    return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     """Wrap logo in a white circle for bar chart y-axis."""
