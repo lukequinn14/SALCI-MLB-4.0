@@ -1969,7 +1969,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                 # Score → heat color
                 if h_score >= 70:
                     heat_color  = "#f97316"   # orange — hot
-                    heat_icon   = "🔥"
+                    #heat_icon   = "🔥"
                 elif h_score >= 55:
                     heat_color  = "#eab308"   # yellow — warm
                     heat_icon   = "📈"
@@ -1979,7 +1979,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
 
                 streak_badge = (
                     f"<span style='font-size:0.58rem;color:#f97316;margin-left:4px;'>"
-                    f"🔥{hit_streak}-game streak</span>"
+                    f"{hit_streak}-game streak</span>"
                     if hit_streak >= 3 else ""
                 )
 
