@@ -52,7 +52,7 @@ TEXT   = "#e2e8f0"
 # ESPN slug map — every abbreviation maps to its verified ESPN CDN slug.
 # CWS must be "chw" (ESPN uses CHW, not CWS). All others are lowercase abbrev.
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "az", "ATL": "atl", "BAL": "bal", "BOS": "bos",
+    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
     "CHC": "chc", "CWS": "chw", "CIN": "cin",          # CWS → chw on ESPN
     "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
     "KC":  "kc",  "LAA": "laa", "LAD": "lad", "MIA": "mia",
@@ -105,21 +105,20 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     if not team:
         return ""
     
+    # Clean and resolve the abbreviation
     team_clean = team.strip()
-    # 1. Resolve Abbreviation
     abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
     
-    # 2. Get the correct CDN slug
+    # Get the slug (e.g., "ari" for Arizona)
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    # 3. Path Selection
-    # If dark_bg is True, we attempt to use the '500-dark' variant for better contrast.
-    # This directory contains white-bordered or lightened versions of the logos.
+    # Build the URL based on background needs
     if dark_bg:
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
+        # Use the '500-dark' path for high-contrast versions
+        return f"https://espncdn.com{slug}.png"
     
-    # Standard fallback
-    return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+    # Default high-quality scoreboard version
+    return f"https://espncdn.com{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     """Wrap logo in a white circle for bar chart y-axis."""
