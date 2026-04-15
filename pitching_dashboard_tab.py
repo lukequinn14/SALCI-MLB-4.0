@@ -88,8 +88,11 @@ _FULL_TO_ABBREV: Dict[str, str] = {
     # ARI — the most common mismatch; MLB API returns "D-backs" in some contexts
     "Diamondbacks": "ARI",  "D-backs": "ARI",  "D-Backs": "ARI",
     "Arizona": "ARI",
+    "AZ": "ARI",
+    "az": "ARI",
     # Other common short names
-    "Athletics": "OAK",     "A's": "OAK",
+    "Athletics": "OAK",
+    "A's": "OAK",
     "Guardians": "CLE",
     "Nationals": "WSH",
     "Cardinals": "STL",
