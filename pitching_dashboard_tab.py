@@ -49,15 +49,17 @@ TEXT   = "#e2e8f0"
 # TEAM LOGO HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ESPN slug map — every abbreviation maps to its verified ESPN CDN slug.
+# CWS must be "chw" (ESPN uses CHW, not CWS). All others are lowercase abbrev.
 _ABBREV_TO_ESPN: Dict[str, str] = {
     "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
-    "CHC": "chc", "CWS": "cws", "CIN": "cin",
+    "CHC": "chc", "CWS": "chw", "CIN": "cin",          # CWS → chw on ESPN
     "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
-    "KC":  "kc", "LAA": "laa", "LAD": "lad", "MIA": "mia",
+    "KC":  "kc",  "LAA": "laa", "LAD": "lad", "MIA": "mia",
     "MIL": "mil", "MIN": "min", "NYM": "nym", "NYY": "nyy",
     "OAK": "oak", "PHI": "phi", "PIT": "pit", "SD":  "sd",
-    "SF":  "sf", "SEA": "sea", "STL": "stl",
-    "TB":  "tb", "TEX": "tex", "TOR": "tor", "WSH": "wsh",
+    "SF":  "sf",  "SEA": "sea", "STL": "stl",
+    "TB":  "tb",  "TEX": "tex", "TOR": "tor", "WSH": "wsh",
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
@@ -79,25 +81,70 @@ _FULL_TO_ABBREV: Dict[str, str] = {
     "Athletics": "OAK",
 }
 
-def get_team_logo_url(team: str) -> str:
-    """Robustly returns the high-res ESPN logo URL."""
-    if not team: return ""
-    # Standardize team name to handle variations
+# Teams whose PRIMARY logo is too dark to read on a dark dashboard background.
+# ESPN hosts a "/500-dark/" variant that contains a lighter, high-contrast
+# version of the logo (confirmed in ESPN's team API `logos` array with
+# rel=["full","dark"]). We use this variant for in-graph logos so they pop
+# on the navy/near-black chart backgrounds.
+#
+# Teams verified to need the light alternative:
+#   COL - purple/black → silver/white alt much more visible
+#   SD  - brown/sand  → yellow "SD" on brown is very dark; dark variant is bright yellow
+#   NYY - pure navy   → dark variant renders with white contrast
+#   MIN - navy/red    → dark variant is brighter
+#   KC  - royal blue  → dark variant adds contrast
+#   PIT - black/gold  → dark variant shows gold prominently
+#   MIL - navy/gold   → dark variant is brighter
+#   CWS - black       → dark variant adds white contrast
+#   SF  - black/orange→ dark variant uses white ring
+_DARK_BACKGROUND_TEAMS = {
+    "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF",
+}
+
+def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
+    """
+    Return the ESPN CDN logo URL for a team.
+
+    Parameters
+    ----------
+    team    : Full team name ("Arizona Diamondbacks") or abbreviation ("ARI").
+    dark_bg : If True, use the light/alternate logo variant for teams whose
+              primary logo is hard to see on dark backgrounds (dark_bg=True
+              selects the ESPN '/500-dark/' path for those teams).
+              Use dark_bg=True for all in-graph scatter/bar chart logos.
+              Use dark_bg=False (default) for white-pill card logos where the
+              white circle provides its own background.
+
+    ESPN CDN paths
+    --------------
+    Standard  : https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png
+    Scoreboard: https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
+    Dark/Light : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
+
+    The scoreboard path is the most reliable for browser rendering.
+    The 500-dark path gives a light-optimised logo for dark backgrounds.
+    Both work in-browser (Streamlit); hotlink-blocked on direct Python fetch.
+    """
+    if not team:
+        return ""
     team_clean = team.strip()
     abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
-    # If abbrev is still long, it might be a team name not in our list
+    # Fuzzy match if full name wasn't found
     if len(abbrev) > 4 and " " in abbrev:
-        # Try to find if any key in _FULL_TO_ABBREV is in the team name
         for full_name, short in _FULL_TO_ABBREV.items():
             if full_name in team_clean or team_clean in full_name:
                 abbrev = short
                 break
-    
+
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
-    # Final safety check for common variations
-    if slug == "cws": slug = "chw"
-    if slug == "ari": slug = "ari" # Ensure ARI is always lowercase
-    return f"https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png"
+
+    # Choose variant
+    if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
+        # Light logo optimised for dark chart backgrounds
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
+    else:
+        # Scoreboard path — same image quality, confirmed working for ARI and all teams
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     """Wrap logo in a white circle for bar chart y-axis."""
@@ -125,8 +172,8 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 def _logo_html(team: str, size: int = 28) -> str:
-    """HTML for Streamlit UI cards."""
-    url = get_team_logo_url(team)
+    """HTML for Streamlit UI cards. Uses standard logo — white pill provides contrast."""
+    url = get_team_logo_url(team, dark_bg=False)
     pill = size + 10
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
@@ -362,10 +409,12 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
     )
 
     # Logo images — dark ring style (in-graph, dark background)
+    # Use dark_bg=True so teams with dark primary logos (NYY, COL, SD…)
+    # get their lighter ESPN alternate variant for better visibility.
     logo_size = (v_max - v_min) * 0.065
     images = []
     for d in rows:
-        url = d.get("logo_url") or get_team_logo_url(d["team"])
+        url = d.get("logo_url") or get_team_logo_url(d["team"], dark_bg=True)
         if not url:
             continue
         images.append(dict(
@@ -417,7 +466,8 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
 
     teams  = [d["team"]   for d in subset]
     values = [d[stat_key] for d in subset]
-    logos  = [d.get("logo_url") or get_team_logo_url(d["team"]) for d in subset]
+    logos  = [d.get("logo_url") or get_team_logo_url(d["team"], dark_bg=True)
+              for d in subset]
 
     bar_colors = [_rank_color(i, len(subset), invert=not best_first)
                   for i in range(len(subset))]
@@ -521,11 +571,12 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
     ))
 
     # Logo SVG dark rings (in-graph, dark background)
+    # dark_bg=True → ESPN's /500-dark/ variant for dark-primary-logo teams
     lw = (x_max - x_min) * 0.058
     lh = (y_max - y_min) * 0.13
     images = []
     for d in rows:
-        url = d.get("logo_url") or get_team_logo_url(d["team"])
+        url = d.get("logo_url") or get_team_logo_url(d["team"], dark_bg=True)
         if not url:
             continue
         images.append(dict(
