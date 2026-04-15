@@ -248,12 +248,27 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
 
 
 def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -> str:
+    """
+    Safe wrapper for use inside chart loops where data rows may carry a
+    pre-cached logo_url from team_pitching_stats.py.
+
+    Validation rules for accepting a cached URL:
+    1. Must contain the ESPN CDN hostname
+    2. Must contain a known-good slug from _ABBREV_TO_ESPN values
+       (rejects URLs with unresolved slugs like "diamondbacks", "d-backs", etc.)
+
+    If validation fails, the URL is re-derived fresh from the team name.
+
+    Usage:
+        url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
+    """
     ESPN_HOST = "espncdn.com/i/teamlogos/mlb"
-
     if cached_url and ESPN_HOST in cached_url:
-        # Accept scoreboard or dark variants
-        return cached_url
-
+        # Check that the URL contains one of our known valid slugs
+        known_slugs = set(_ABBREV_TO_ESPN.values())  # e.g. {"ari", "atl", "chw", ...}
+        url_lower = cached_url.lower()
+        if any(f"/{slug}." in url_lower for slug in known_slugs):
+            return cached_url
     return get_team_logo_url(team, dark_bg=dark_bg)
 
 
