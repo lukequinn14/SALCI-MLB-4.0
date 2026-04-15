@@ -52,7 +52,7 @@ TEXT   = "#e2e8f0"
 # ESPN slug map — every abbreviation maps to its verified ESPN CDN slug.
 # CWS must be "chw" (ESPN uses CHW, not CWS). All others are lowercase abbrev.
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
+    "ARI": "arizona", "ATL": "atl", "BAL": "bal", "BOS": "bos",
     "CHC": "chc", "CWS": "chw", "CIN": "cin",          # CWS → chw on ESPN
     "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
     "KC":  "kc",  "LAA": "laa", "LAD": "lad", "MIA": "mia",
@@ -103,33 +103,16 @@ _DARK_BACKGROUND_TEAMS = {
 
 def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     """
-    Return the ESPN CDN logo URL for a team.
-
-    Parameters
-    ----------
-    team    : Full team name ("Arizona Diamondbacks") or abbreviation ("ARI").
-    dark_bg : If True, use the light/alternate logo variant for teams whose
-              primary logo is hard to see on dark backgrounds (dark_bg=True
-              selects the ESPN '/500-dark/' path for those teams).
-              Use dark_bg=True for all in-graph scatter/bar chart logos.
-              Use dark_bg=False (default) for white-pill card logos where the
-              white circle provides its own background.
-
-    ESPN CDN paths
-    --------------
-    Standard  : https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png
-    Scoreboard: https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
-    Dark/Light : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
-
-    The scoreboard path is the most reliable for browser rendering.
-    The 500-dark path gives a light-optimised logo for dark backgrounds.
-    Both work in-browser (Streamlit); hotlink-blocked on direct Python fetch.
+    Robust ESPN logo resolver with fallback chain.
     """
+
     if not team:
         return ""
+
     team_clean = team.strip()
     abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
-    # Fuzzy match if full name wasn't found
+
+    # Fuzzy match if needed
     if len(abbrev) > 4 and " " in abbrev:
         for full_name, short in _FULL_TO_ABBREV.items():
             if full_name in team_clean or team_clean in full_name:
@@ -138,13 +121,21 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
 
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    # Choose variant
+    # Build URL candidates (ordered by reliability)
+    urls = []
+
+    # 1. Dark variant (only if needed)
     if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
-        # Light logo optimised for dark chart backgrounds
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
-    else:
-        # Scoreboard path — same image quality, confirmed working for ARI and all teams
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+        urls.append(f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png")
+
+    # 2. Standard 500 (MOST reliable overall)
+    urls.append(f"https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png")
+
+    # 3. Scoreboard fallback
+    urls.append(f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png")
+
+    # Return first (browser will fallback via HTML onerror if needed)
+    return urls[0]
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     """Wrap logo in a white circle for bar chart y-axis."""
@@ -172,15 +163,23 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 def _logo_html(team: str, size: int = 28) -> str:
-    """HTML for Streamlit UI cards. Uses standard logo — white pill provides contrast."""
-    url = get_team_logo_url(team, dark_bg=False)
+    """HTML with built-in fallback chain."""
+    team_clean = team.strip()
+    abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
+    slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
+
+    primary = f"https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png"
+    fallback = f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+
     pill = size + 10
+
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
         f'background:#ffffff;border-radius:50%;width:{pill}px;height:{pill}px;'
         f'flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.2);border:1px solid rgba(0,0,0,0.05);">'
-        f'<img src="{url}" width="{size}" height="{size}" style="display:block;object-fit:contain;" '
-        f'onerror="this.style.display=\'none\';"></span>'
+        f'<img src="{primary}" width="{size}" height="{size}" '
+        f'style="display:block;object-fit:contain;" '
+        f'onerror="this.onerror=null;this.src=\'{fallback}\';"></span>'
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
