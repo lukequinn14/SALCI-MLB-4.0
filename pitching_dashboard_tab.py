@@ -52,14 +52,36 @@ TEXT   = "#e2e8f0"
 # ESPN slug map — every abbreviation maps to its verified ESPN CDN slug.
 # CWS must be "chw" (ESPN uses CHW, not CWS). All others are lowercase abbrev.
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
-    "CHC": "chc", "CWS": "chw", "CIN": "cin",          # CWS → chw on ESPN
-    "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
-    "KC":  "kc",  "LAA": "laa", "LAD": "lad", "MIA": "mia",
-    "MIL": "mil", "MIN": "min", "NYM": "nym", "NYY": "nyy",
-    "OAK": "oak", "PHI": "phi", "PIT": "pit", "SD":  "sd",
-    "SF":  "sf",  "SEA": "sea", "STL": "stl",
-    "TB":  "tb",  "TEX": "tex", "TOR": "tor", "WSH": "wsh",
+    "ARI": "arizona",      # Fixed from "ari"
+    "ATL": "atl",
+    "BAL": "bal",
+    "BOS": "bos",
+    "CHC": "chc",
+    "CWS": "chw",          # ESPN uses "chw" for White Sox
+    "CIN": "cin",
+    "CLE": "cleveland",    # Suggest using full slug
+    "COL": "col",
+    "DET": "det",
+    "HOU": "hou",
+    "KC":  "kansas-city",  # Fixed from "kc"
+    "LAA": "los-angeles-angels", # Fixed from "laa"
+    "LAD": "lad",
+    "MIA": "mia",
+    "MIL": "mil",
+    "MIN": "min",
+    "NYM": "nym",
+    "NYY": "new-york-yankees", # Optional: "nyy" often works, but full is safer
+    "OAK": "oak",
+    "PHI": "phi",
+    "PIT": "pit",
+    "SD":  "sd",
+    "SF":  "sf",
+    "SEA": "sea",
+    "STL": "stl",
+    "TB":  "tampa-bay",    # Fixed from "tb"
+    "TEX": "tex",
+    "TOR": "tor",
+    "WSH": "washington",   # Fixed from "wsh"
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
@@ -98,52 +120,23 @@ _FULL_TO_ABBREV: Dict[str, str] = {
 #   CWS - black       → dark variant adds white contrast
 #   SF  - black/orange→ dark variant uses white ring
 _DARK_BACKGROUND_TEAMS = {
-    "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF",
+    "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF", "ARI"
 }
 
-def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
+def get_team_logo_url(abbrev: str, dark_bg: bool = False) -> str:
     """
-    Return the ESPN CDN logo URL for a team.
-
-    Parameters
-    ----------
-    team    : Full team name ("Arizona Diamondbacks") or abbreviation ("ARI").
-    dark_bg : If True, use the light/alternate logo variant for teams whose
-              primary logo is hard to see on dark backgrounds (dark_bg=True
-              selects the ESPN '/500-dark/' path for those teams).
-              Use dark_bg=True for all in-graph scatter/bar chart logos.
-              Use dark_bg=False (default) for white-pill card logos where the
-              white circle provides its own background.
-
-    ESPN CDN paths
-    --------------
-    Standard  : https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png
-    Scoreboard: https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
-    Dark/Light : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
-
-    The scoreboard path is the most reliable for browser rendering.
-    The 500-dark path gives a light-optimised logo for dark backgrounds.
-    Both work in-browser (Streamlit); hotlink-blocked on direct Python fetch.
+    Returns the ESPN CDN URL for a team logo.
+    If dark_bg is True and the team is in the hard-to-see list, 
+    it fetches the high-contrast variant.
     """
-    if not team:
-        return ""
-    team_clean = team.strip()
-    abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
-    # Fuzzy match if full name wasn't found
-    if len(abbrev) > 4 and " " in abbrev:
-        for full_name, short in _FULL_TO_ABBREV.items():
-            if full_name in team_clean or team_clean in full_name:
-                abbrev = short
-                break
-
-    slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
-
-    # Choose variant
-    if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
-        # Light logo optimised for dark chart backgrounds
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
+    slug = _ABBREV_TO_ESPN.get(abbrev.upper(), abbrev.lower())
+    
+    # Use high-contrast variants for dark background teams
+    if dark_bg and abbrev.upper() in _DARK_BACKGROUND_TEAMS:
+        # Note the addition of '/scoreboard/' to the dark path
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/scoreboard/{slug}.png"
     else:
-        # Scoreboard path — same image quality, confirmed working for ARI and all teams
+        # Standard high-res scoreboard logo
         return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
