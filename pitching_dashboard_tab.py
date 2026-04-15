@@ -142,7 +142,7 @@ _FULL_TO_ABBREV: Dict[str, str] = {
 # NOTE: ARI is intentionally NOT in this set — its red/black/teal serpiente
 # logo renders fine on dark backgrounds via the standard scoreboard path.
 _DARK_BACKGROUND_TEAMS = {
-    "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF",
+    "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF"
 }
 
 # ── Hardcoded URL overrides — last-resort escape hatch ───────────────────────
@@ -237,10 +237,12 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
 
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
-        dark_url = f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
-        # Fallback to scoreboard if dark version doesn't exist
-        return dark_url
+    if dark_bg:
+        if abbrev in _DARK_BACKGROUND_TEAMS:
+            return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
+        else:
+            return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+
 
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
