@@ -1708,9 +1708,10 @@ def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
         st.markdown("---")
 
 
-def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: Dict):
+def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: Dict, hitter_results: List[Dict] = None):
     """
     Render a head-to-head matchup card. Home team always on the right.
+    hitter_results: all_hitter_results passed in so we can show hot hitters per side.
     """
     game_pk    = game["game_pk"]
     home_team  = game.get("home_team", "Home")
@@ -1827,7 +1828,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
     col_away, col_vs, col_home = st.columns([5, 3, 5])
 
     def _render_pitcher_panel(pitcher, hand, salci, salci_color, grade,
-                               exp, floor, floor_conf, hot_count, lineup_sz):
+                               exp, floor, floor_conf, hot_count, lineup_sz, opp_hitters=None):
         is_statcast = pitcher.get("is_statcast", False)
         badge_txt   = "Statcast" if is_statcast else "Stats API"
         badge_color = "#059669" if is_statcast else "#475569"
@@ -1929,26 +1930,150 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
                         unsafe_allow_html=True,
                     )
 
-        # Footer meta row
+        # ── HITTER INTEL FOOTER ──────────────────────────────────────────────
         lineup_confirmed = lineup_sz > 0
-        lineup_txt = f"{lineup_sz} batters confirmed" if lineup_confirmed else "Lineup pending"
+        lineup_txt   = f"✅ {lineup_sz} batters confirmed" if lineup_confirmed else "⏳ Lineup pending"
         lineup_color = "#10b981" if lineup_confirmed else "#f59e0b"
+
+        # Header row: lineup status + hot count badge
         st.markdown(
-            f"<div style='margin-top:12px;padding-top:10px;border-top:1px solid #1e293b;"
-            f"display:flex;justify-content:space-between;align-items:center;'>"
-            f"<span style='font-size:0.68rem;color:#475569;'>Hot opp. hitters: "
-            f"<strong style='color:{'#f97316' if hot_count > 0 else '#475569'};'>{hot_count}</strong></span>"
-            f"<span style='font-size:0.68rem;color:{lineup_color};font-weight:600;'>{lineup_txt}</span>"
+            f"<div style='margin-top:14px;padding-top:10px;border-top:1px solid #1e293b;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>"
+            f"<span style='font-size:0.6rem;color:#334155;font-weight:700;letter-spacing:1.5px;'>OPP. LINEUP INTEL</span>"
+            f"<span style='font-size:0.65rem;color:{lineup_color};font-weight:600;'>{lineup_txt}</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        # Show individual hitter rows if we have data
+        if opp_hitters:
+            # Sort: hot hitters first (score desc), take top 3
+            sorted_hitters = sorted(opp_hitters, key=lambda h: h.get("score", 0), reverse=True)
+            top_hitters    = sorted_hitters[:3]
+
+            for h in top_hitters:
+                recent      = h.get("recent", {})
+                l7_avg      = recent.get("avg", 0)
+                l7_ops      = recent.get("ops", 0)
+                l7_k_rate   = recent.get("k_rate", 0)
+                hit_streak  = recent.get("hit_streak", 0)
+                h_score     = h.get("score", 50)
+                order       = h.get("batting_order", "?")
+                bat_side    = h.get("bat_side", "R")
+                name        = h.get("name", "Unknown")
+                # First name initial + last name for compact display
+                name_parts  = name.split()
+                short_name  = (f"{name_parts[0][0]}. {' '.join(name_parts[1:])}"
+                               if len(name_parts) > 1 else name)
+
+                # Score → heat color
+                if h_score >= 70:
+                    heat_color  = "#f97316"   # orange — hot
+                    heat_icon   = "🔥"
+                elif h_score >= 55:
+                    heat_color  = "#eab308"   # yellow — warm
+                    heat_icon   = "📈"
+                else:
+                    heat_color  = "#64748b"   # grey — neutral/cold
+                    heat_icon   = "❄️"
+
+                streak_badge = (
+                    f"<span style='font-size:0.58rem;color:#f97316;margin-left:4px;'>"
+                    f"🔥{hit_streak}-game streak</span>"
+                    if hit_streak >= 3 else ""
+                )
+
+                # Hit prob badge if available
+                hit_prob     = h.get("hit_prob_score")
+                prob_badge   = ""
+                if hit_prob is not None:
+                    prob_color = "#10b981" if hit_prob >= 55 else "#eab308" if hit_prob >= 45 else "#ef4444"
+                    prob_badge = (
+                        f"<span style='font-size:0.58rem;background:{prob_color}22;"
+                        f"color:{prob_color};border:1px solid {prob_color}44;"
+                        f"padding:1px 5px;border-radius:3px;margin-left:4px;'>"
+                        f"Hit {hit_prob:.0f}%</span>"
+                    )
+
+                st.markdown(
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;"
+                    f"background:#0f172a;border-radius:6px;padding:5px 8px;margin-bottom:4px;"
+                    f"border-left:2px solid {heat_color};'>"
+
+                    # Left: order + name + badges
+                    f"<div style='flex:1;min-width:0;'>"
+                    f"<div style='font-size:0.7rem;font-weight:700;color:#e2e8f0;"
+                    f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>"
+                    f"<span style='color:{heat_color};margin-right:4px;'>{heat_icon}</span>"
+                    f"<span style='color:#475569;font-size:0.6rem;margin-right:4px;'>#{order}</span>"
+                    f"{short_name} "
+                    f"<span style='color:#475569;font-size:0.58rem;'>({bat_side})</span>"
+                    f"</div>"
+                    f"<div style='margin-top:1px;'>{streak_badge}{prob_badge}</div>"
+                    f"</div>"
+
+                    # Right: L7 stat pills
+                    f"<div style='display:flex;gap:4px;margin-left:8px;flex-shrink:0;'>"
+
+                    # L7 AVG
+                    f"<div style='text-align:center;background:#1e293b;border-radius:4px;padding:3px 6px;'>"
+                    f"<div style='font-size:0.5rem;color:#475569;font-weight:600;'>L7 AVG</div>"
+                    f"<div style='font-size:0.72rem;font-weight:700;"
+                    f"color:{'#10b981' if l7_avg >= 0.300 else '#eab308' if l7_avg >= 0.250 else '#ef4444'};'>"
+                    f".{int(l7_avg * 1000):03d}</div>"
+                    f"</div>"
+
+                    # L7 OPS
+                    f"<div style='text-align:center;background:#1e293b;border-radius:4px;padding:3px 6px;'>"
+                    f"<div style='font-size:0.5rem;color:#475569;font-weight:600;'>OPS</div>"
+                    f"<div style='font-size:0.72rem;font-weight:700;"
+                    f"color:{'#10b981' if l7_ops >= 0.850 else '#eab308' if l7_ops >= 0.700 else '#ef4444'};'>"
+                    f"{l7_ops:.3f}</div>"
+                    f"</div>"
+
+                    # L7 K%
+                    f"<div style='text-align:center;background:#1e293b;border-radius:4px;padding:3px 6px;'>"
+                    f"<div style='font-size:0.5rem;color:#475569;font-weight:600;'>K%</div>"
+                    f"<div style='font-size:0.72rem;font-weight:700;"
+                    f"color:{'#10b981' if l7_k_rate <= 0.15 else '#eab308' if l7_k_rate <= 0.22 else '#ef4444'};'>"
+                    f"{l7_k_rate*100:.0f}%</div>"
+                    f"</div>"
+
+                    f"</div>"  # end stat pills
+                    f"</div>",  # end hitter row
+                    unsafe_allow_html=True,
+                )
+
+            # If lineup confirmed but no hitter data loaded yet
+            if not top_hitters and lineup_confirmed:
+                st.markdown(
+                    "<div style='font-size:0.65rem;color:#334155;text-align:center;"
+                    "padding:6px;'>Enable Hitter Analysis to see batter details</div>",
+                    unsafe_allow_html=True,
+                )
+
+        else:
+            # No hitter data — show simple hot count line
+            st.markdown(
+                f"<div style='font-size:0.65rem;color:#475569;'>"
+                f"Hot batters: <strong style='color:{'#f97316' if hot_count > 0 else '#475569'};'>"
+                f"{hot_count}</strong> — Enable Hitter Analysis for details</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("</div></div>", unsafe_allow_html=True)  # close footer + panel
+
+    # Build per-side hitter lists from hitter_results if available
+    _hr = hitter_results or []
+    # Away pitcher faces home hitters; home pitcher faces away hitters
+    home_opp_hitters = [h for h in _hr if h.get("game_pk") == game_pk and h.get("team") == home_team] or None
+    away_opp_hitters = [h for h in _hr if h.get("game_pk") == game_pk and h.get("team") == away_team] or None
 
     with col_away:
         _render_pitcher_panel(
             away_pitcher, away_hand, away_salci, away_salci_color, away_grade,
             away_exp, away_floor, away_floor_conf, home_hot, home_lineup_sz,
+            opp_hitters=home_opp_hitters,
         )
 
     # ── CENTER EDGE PANEL ─────────────────────────────────────────────────────
@@ -2025,6 +2150,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         _render_pitcher_panel(
             home_pitcher, home_hand, home_salci, home_salci_color, home_grade,
             home_exp, home_floor, home_floor_conf, away_hot, away_lineup_sz,
+            opp_hitters=away_opp_hitters,
         )
 
     # ── FOOTER ────────────────────────────────────────────────────────────────
@@ -3009,7 +3135,7 @@ def main():
                         key=lambda g: g.get("game_time", g.get("game_datetime", "23:59"))
                     )
                     for game_obj in matchup_games_sorted:
-                        render_matchup_card(game_obj, filtered_pitchers, lineup_status)
+                        render_matchup_card(game_obj, filtered_pitchers, lineup_status, all_hitter_results)
 
             render_compact_summary(all_pitcher_results)
             
