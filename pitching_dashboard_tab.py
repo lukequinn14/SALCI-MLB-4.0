@@ -481,8 +481,6 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
     )
 
     # Logo images — dark ring style (in-graph, dark background)
-    # resolve_logo_url() validates any cached URL from team_pitching_stats
-    # and re-derives from the team name if the cached URL looks bad.
     logo_size = (v_max - v_min) * 0.065
     images = []
     for d in rows:
@@ -498,9 +496,12 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
             layer="above",
         ))
 
+    # ⭐ ADD IMAGES *AFTER* TRACES — FIXES ARI LOGO
+    for img in images:
+        fig.add_layout_image(img)
+
     ann_cfg = dict(showarrow=False, font_size=9, font_color="rgba(148,163,184,0.55)")
     fig.update_layout(
-        images      = images,
         annotations = [
             _subtitle("Above diagonal = weaker bullpen than rotation · hover for values"),
             dict(x=v_max-0.05, y=v_min+0.05, text="Strong Bullpen",
@@ -518,7 +519,9 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
                       scaleanchor="x", scaleratio=1),
         **_base_layout(margin=dict(l=60, r=40, t=90, b=60)),
     )
+
     return fig
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
