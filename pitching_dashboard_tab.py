@@ -53,18 +53,18 @@ TEXT   = "#e2e8f0"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "arizona",      # Was 'ari'
+    "ARI": "arizona",      # Updated to full city
     "ATL": "atl",
     "BAL": "bal",
     "BOS": "bos",
-    "CHC": "chicago-cubs", # Updated for consistency
-    "CWS": "chicago-white-sox", 
+    "CHC": "chc",          # Standard Cubs abbrev
+    "CWS": "chw",          # Standard White Sox abbrev
     "CIN": "cin",
     "CLE": "cle",
     "COL": "col",
     "DET": "det",
     "HOU": "hou",
-    "KC":  "kansas-city",  # Was 'kc'
+    "KC":  "kansas-city",  # Updated to full city
     "LAA": "laa",
     "LAD": "lad",
     "MIA": "mia",
@@ -75,14 +75,14 @@ _ABBREV_TO_ESPN: Dict[str, str] = {
     "OAK": "oak",
     "PHI": "phi",
     "PIT": "pit",
-    "SD":  "san-diego",    # Was 'sd'
-    "SF":  "san-francisco",# Was 'sf'
+    "SD":  "san-diego",    # Updated
+    "SF":  "san-francisco",# Updated
     "SEA": "sea",
-    "STL": "st-louis",     # Was 'stl'
-    "TB":  "tampa-bay",    # Was 'tb'
+    "STL": "st-louis",     # Updated
+    "TB":  "tampa-bay",    # Updated
     "TEX": "tex",
     "TOR": "tor",
-    "WSH": "washington",   # Was 'wsh'
+    "WSH": "washington",   # Updated
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
@@ -175,12 +175,14 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
 
 
 def _logo_html(team: str, size: int = 28) -> str:
-    """Uses the helper to ensure full names OR abbrevs work."""
-    url = get_team_logo_url(team) # FIX: Use the helper, not TEAM_LOGOS.get()
+    # Use the helper function to handle names OR abbreviations
+    url = get_team_logo_url(team) 
     
     if not url:
-        return f"<span style='font-size:0.75rem;font-weight:700;color:var(--s-muted)'>{team}</span>"
-    
+        return (
+            "<span style='font-size:0.75rem;font-weight:700;"
+            "color:var(--s-muted)'>" + team + "</span>"
+        )
     pill = size + 10
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
