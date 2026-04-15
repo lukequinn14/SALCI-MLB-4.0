@@ -159,20 +159,35 @@ _URL_OVERRIDES: Dict[str, tuple] = {
 
 
 def _resolve_abbrev(team: str) -> str:
+    """
+    Convert any team name/alias/abbreviation to a canonical 2-3 letter abbrev.
+
+    Resolution order:
+    1. Direct lookup in _FULL_TO_ABBREV (full names + aliases)
+    2. Already an abbrev — passthrough if in _ABBREV_TO_ESPN
+    3. Substring fuzzy match against _FULL_TO_ABBREV keys
+    4. Fallback: uppercase the input and hope for the best
+    """
     team_clean = team.strip()
 
+    # 1. Direct alias match (most common path)
     if team_clean in _FULL_TO_ABBREV:
         return _FULL_TO_ABBREV[team_clean]
 
+    # 2. Already a valid abbreviation
     upper = team_clean.upper()
     if upper in _ABBREV_TO_ESPN:
         return upper
 
+    # 3. Case-insensitive alias match
     lower = team_clean.lower()
     for alias, abbrev in _FULL_TO_ABBREV.items():
         if alias.lower() == lower:
             return abbrev
 
+    # 4. Substring fuzzy match — check if input is contained in a known full name
+    #    or a known full name is contained in the input. Use the longest match
+    #    to avoid "Cardinals" matching "White Sox Cardinals" type edge cases.
     best_match, best_len = None, 0
     for full_name, abbrev in _FULL_TO_ABBREV.items():
         full_lower = full_name.lower()
@@ -182,15 +197,40 @@ def _resolve_abbrev(team: str) -> str:
     if best_match:
         return best_match
 
+    # 5. Last resort — uppercase passthrough (may produce a broken URL, but
+    #    the onerror handler in the img tag will hide it gracefully)
     return upper
 
 
 def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
+    """
+    Return the ESPN CDN logo URL for any MLB team input.
+
+    Parameters
+    ----------
+    team    : Any form — full name, nickname, abbreviation, or API short name.
+              Examples: "Arizona Diamondbacks", "D-backs", "ARI", "ari"
+    dark_bg : When True, use ESPN's /500-dark/ path for teams whose primary
+              logo is hard to see on dark/navy chart backgrounds. Pass
+              dark_bg=True for all Plotly scatter/bar in-graph logos.
+              Pass dark_bg=False (default) for HTML card logos — the white
+              pill wrapper provides its own contrast.
+
+    ESPN CDN paths used
+    -------------------
+    Standard   : https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
+    Dark alt   : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
+    
+
+    Both paths work in-browser (Streamlit). Direct server-side fetch returns 403
+    (ESPN hotlink protection) — this is expected and harmless.
+    """
     if not team:
         return ""
 
     abbrev = _resolve_abbrev(team)
 
+    # Hardcoded override wins over all slug logic
     if abbrev in _URL_OVERRIDES:
         std_url, dark_url = _URL_OVERRIDES[abbrev]
         return dark_url if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS else std_url
@@ -199,20 +239,31 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
 
     if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
         return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
-
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
 
-# ⭐⭐⭐ THE REAL FIX ⭐⭐⭐
-# Accept ANY ESPN MLB logo URL — do NOT reject ARI anymore.
 def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -> str:
+    """
+    Safe wrapper for use inside chart loops where data rows may carry a
+    pre-cached logo_url from team_pitching_stats.py.
+
+    Validation rules for accepting a cached URL:
+    1. Must contain the ESPN CDN hostname
+    2. Must contain a known-good slug from _ABBREV_TO_ESPN values
+       (rejects URLs with unresolved slugs like "diamondbacks", "d-backs", etc.)
+
+    If validation fails, the URL is re-derived fresh from the team name.
+
+    Usage:
+        url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
+    """
     ESPN_HOST = "espncdn.com/i/teamlogos/mlb"
-
-    # If the cached URL is an ESPN logo, trust it.
     if cached_url and ESPN_HOST in cached_url:
-        return cached_url
-
-    # Otherwise regenerate
+        # Check that the URL contains one of our known valid slugs
+        known_slugs = set(_ABBREV_TO_ESPN.values())  # e.g. {"ari", "atl", "chw", ...}
+        url_lower = cached_url.lower()
+        if any(f"/{slug}." in url_lower for slug in known_slugs):
+            return cached_url
     return get_team_logo_url(team, dark_bg=dark_bg)
 
 
@@ -231,6 +282,7 @@ def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
+
 def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
     pad = size // 6
     inner = size - pad * 2
@@ -246,6 +298,7 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
         f'</svg>'
     )
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
 
 
 def _logo_html(team: str, size: int = 28) -> str:
