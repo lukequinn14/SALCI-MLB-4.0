@@ -583,7 +583,6 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
 # CHART 2: Rankings — logo bars, green→red gradient
 # ─────────────────────────────────────────────────────────────────────────────
 
-Create and now do the same for these please!!
 
 def chart_rankings(data: List[Dict], stat_key: str, label: str,
                    lower_is_better: bool, n: int,
