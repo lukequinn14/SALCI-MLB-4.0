@@ -17,7 +17,8 @@ Usage in mlb_salci_full.py:
 Changes in v3.0
 ---------------
 - ARI logo fix: ESPN uses full-city slugs (arizona, kansas-city, etc.)
-- White pill on EVERY logo — HTML via _logo_html(), Plotly via _svg_pill_url()
+- White pill on EVERY logo — HTML via _logo_html(), Plotly bar y-axis via _svg_pill_url()
+- Dark navy ring on in-graph scatter logos via _svg_dark_ring_url() (Charts 1 & 3)
 - Starter vs Bullpen redesigned as scatter (square, shareable) + team cards below
 - Shareable cards for: Best Rotations, Best Bullpens, Worst Bullpens, Best K%, Regression
 - Green → Red gradient bars throughout
@@ -47,7 +48,8 @@ TEXT   = "#e2e8f0"
 # ─────────────────────────────────────────────────────────────────────────────
 # TEAM LOGOS
 # ESPN CDN with verified slugs — several teams use full city names, not abbrevs.
-# White pill is applied everywhere via _logo_html() (HTML) and _svg_pill_url() (Plotly).
+# White pill (_svg_pill_url) used for bar chart y-axis logos (xref='paper' — outside dark area).
+# Dark navy ring (_svg_dark_ring_url) used for logos plotted inside scatter charts (xref='x').
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ABBREV_TO_ESPN: Dict[str, str] = {
@@ -117,9 +119,9 @@ def get_team_logo_url(team: str) -> str:
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     """
-    Wrap a logo URL in a white-circle SVG and return a base64 data-URI.
-    Used for Plotly layout images — embeds the white pill directly in the
-    image source so it renders correctly without any HTML/CSS dependency.
+    Wrap a logo URL in a WHITE-circle SVG and return a base64 data-URI.
+    Used for Plotly bar-chart y-axis logos (xref='paper') — these sit
+    outside the dark plot area so a white pill is appropriate.
     """
     pad   = size // 6
     inner = size - pad * 2
@@ -129,6 +131,39 @@ def _svg_pill_url(logo_url: str, size: int = 44) -> str:
         'xmlns:xlink="http://www.w3.org/1999/xlink" '
         'width="' + str(size) + '" height="' + str(size) + '">'
         '<circle cx="' + str(cx) + '" cy="' + str(cx) + '" r="' + str(cx) + '" fill="white"/>'
+        '<image href="' + logo_url + '" '
+        'x="' + str(pad) + '" y="' + str(pad) + '" '
+        'width="' + str(inner) + '" height="' + str(inner) + '" '
+        'preserveAspectRatio="xMidYMid meet"/>'
+        '</svg>'
+    )
+    b64 = base64.b64encode(svg.encode()).decode()
+    return "data:image/svg+xml;base64," + b64
+
+
+def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
+    """
+    Wrap a logo URL in a DARK-background circle with a subtle teal glow ring.
+    Used for logos rendered INSIDE scatter/chart plot areas (xref='x', yref='y')
+    where the background is dark — a white pill looks harsh and out of place.
+
+    Design: semi-transparent dark navy fill + 1.5px teal-ish stroke + logo centred.
+    The dark backing ensures all team logos (even light-coloured ones) remain
+    legible against the chart's dark background.
+    """
+    pad   = size // 6
+    inner = size - pad * 2
+    cx    = size // 2
+    r     = cx - 1          # slightly inset so stroke isn't clipped
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'xmlns:xlink="http://www.w3.org/1999/xlink" '
+        'width="' + str(size) + '" height="' + str(size) + '">'
+        # Dark navy backing circle
+        '<circle cx="' + str(cx) + '" cy="' + str(cx) + '" r="' + str(r) + '" '
+        'fill="rgba(13,27,42,0.82)" '
+        'stroke="#1D9E75" stroke-width="1.5" stroke-opacity="0.55"/>'
+        # Logo image, padded inside
         '<image href="' + logo_url + '" '
         'x="' + str(pad) + '" y="' + str(pad) + '" '
         'width="' + str(inner) + '" height="' + str(inner) + '" '
@@ -389,7 +424,7 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
         layer="below",
     )
 
-    # Logo images as SVG pills
+    # Logo images — dark ring style (in-graph, dark background)
     logo_size = (v_max - v_min) * 0.065
     images = []
     for d in rows:
@@ -397,7 +432,7 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
         if not url:
             continue
         images.append(dict(
-            source  = _svg_pill_url(url, 48),
+            source  = _svg_dark_ring_url(url, 48),
             xref="x", yref="y",
             x=d["starter_era"], y=d["bullpen_era"],
             sizex=logo_size, sizey=logo_size,
@@ -548,7 +583,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
         showlegend=False,
     ))
 
-    # Logo SVG pills
+    # Logo SVG dark rings (in-graph, dark background)
     lw = (x_max - x_min) * 0.058
     lh = (y_max - y_min) * 0.13
     images = []
@@ -557,7 +592,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
         if not url:
             continue
         images.append(dict(
-            source=_svg_pill_url(url, 44), xref="x", yref="y",
+            source=_svg_dark_ring_url(url, 44), xref="x", yref="y",
             x=d["k_pct"], y=d["era"],
             sizex=lw, sizey=lh,
             xanchor="center", yanchor="middle", layer="above",
