@@ -216,6 +216,7 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     -------------------
     Standard   : https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
     Dark alt   : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
+    
 
     Both paths work in-browser (Streamlit). Direct server-side fetch returns 403
     (ESPN hotlink protection) — this is expected and harmless.
@@ -267,10 +268,9 @@ def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     pad, cx = size // 6, size // 2
     inner = size - pad * 2
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" height="{size}" style="width:auto;max-width:{size}px;object-fit:contain;">'
         f'<circle cx="{cx}" cy="{cx}" r="{cx}" fill="white"/>'
-        f'<image href="{logo_url}" x="{pad}" y="{pad}" width="{inner}" height="{inner}" '
-        'preserveAspectRatio="xMidYMid meet"/></svg>'
+        f'<image href="{logo_url}" x="{pad}" y="{pad}" height="{inner}" preserveAspectRatio="xMidYMid meet" />'
     )
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
@@ -280,10 +280,10 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
     pad, cx = size // 6, size // 2
     inner, r = size - pad * 2, cx - 1
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" height="{size}" style="width:auto;max-width:{size}px;object-fit:contain;">'
         f'<circle cx="{cx}" cy="{cx}" r="{r}" fill="rgba(13,27,42,0.85)" '
         'stroke="#1D9E75" stroke-width="1.5" stroke-opacity="0.6"/>'
-        f'<image href="{logo_url}" x="{pad}" y="{pad}" width="{inner}" height="{inner}" '
+        f'<image href="{logo_url}" x="{pad}" y="{pad}" height="{inner}" preserveAspectRatio="xMidYMid meet" />'
         'preserveAspectRatio="xMidYMid meet"/></svg>'
     )
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
@@ -297,7 +297,7 @@ def _logo_html(team: str, size: int = 28) -> str:
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
         f'background:#ffffff;border-radius:50%;width:{pill}px;height:{pill}px;'
         f'flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.2);border:1px solid rgba(0,0,0,0.05);">'
-        f'<img src="{url}" width="{size}" height="{size}" style="display:block;object-fit:contain;" '
+        f'<img src="{url}" height="{size}" style="width:auto;max-width:{size}px;object-fit:contain;" style="display:block;object-fit:contain;" '
         f'onerror="this.style.display=\'none\';"></span>'
     )
 # ─────────────────────────────────────────────────────────────────────────────
