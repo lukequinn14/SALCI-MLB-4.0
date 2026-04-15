@@ -53,18 +53,18 @@ TEXT   = "#e2e8f0"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "ari",
+    "ARI": "arizona",      # Was 'ari'
     "ATL": "atl",
     "BAL": "bal",
     "BOS": "bos",
-    "CHC": "chi",   # Updated
-    "CWS": "chw",   # Updated
+    "CHC": "chicago-cubs", # Updated for consistency
+    "CWS": "chicago-white-sox", 
     "CIN": "cin",
     "CLE": "cle",
     "COL": "col",
     "DET": "det",
     "HOU": "hou",
-    "KC":  "kc",    # Updated
+    "KC":  "kansas-city",  # Was 'kc'
     "LAA": "laa",
     "LAD": "lad",
     "MIA": "mia",
@@ -75,14 +75,14 @@ _ABBREV_TO_ESPN: Dict[str, str] = {
     "OAK": "oak",
     "PHI": "phi",
     "PIT": "pit",
-    "SD":  "sd",    # Updated
-    "SF":  "sf",    # Updated
+    "SD":  "san-diego",    # Was 'sd'
+    "SF":  "san-francisco",# Was 'sf'
     "SEA": "sea",
-    "STL": "stl",
-    "TB":  "tb",    # Updated
+    "STL": "st-louis",     # Was 'stl'
+    "TB":  "tampa-bay",    # Was 'tb'
     "TEX": "tex",
     "TOR": "tor",
-    "WSH": "wsh",
+    "WSH": "washington",   # Was 'wsh'
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
@@ -175,25 +175,21 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
 
 
 def _logo_html(team: str, size: int = 28) -> str:
-    """
-    White-pill-wrapped <img> HTML.  Works in st.markdown(unsafe_allow_html=True).
-    White background ensures dark team logos are visible on both dark and light themes.
-    """
-    url = TEAM_LOGOS.get(team, "")
+    """Uses the helper to ensure full names OR abbrevs work."""
+    url = get_team_logo_url(team) # FIX: Use the helper, not TEAM_LOGOS.get()
+    
     if not url:
-        return (
-            "<span style='font-size:0.75rem;font-weight:700;"
-            "color:var(--s-muted)'>" + team + "</span>"
-        )
+        return f"<span style='font-size:0.75rem;font-weight:700;color:var(--s-muted)'>{team}</span>"
+    
     pill = size + 10
     return (
-        '<span style="display:inline-flex;align-items:center;justify-content:center;'
-        'background:#ffffff;border-radius:50%;'
-        'width:' + str(pill) + 'px;height:' + str(pill) + 'px;'
-        'flex-shrink:0;box-shadow:0 1px 6px rgba(0,0,0,0.18);'
-        'border:1px solid rgba(0,0,0,0.06);">'
-        '<img src="' + url + '" width="' + str(size) + '" height="' + str(size) + '" '
-        'style="display:block;object-fit:contain;" alt="' + team + '" '
+        f'<span style="display:inline-flex;align-items:center;justify-content:center;'
+        f'background:#ffffff;border-radius:50%;'
+        f'width:{pill}px;height:{pill}px;'
+        f'flex-shrink:0;box-shadow:0 1px 6px rgba(0,0,0,0.18);'
+        f'border:1px solid rgba(0,0,0,0.06);">'
+        f'<img src="{url}" width="{size}" height="{size}" '
+        f'style="display:block;object-fit:contain;" alt="{team}" '
         'onerror="this.style.display=\'none\';">'
         '</span>'
     )
