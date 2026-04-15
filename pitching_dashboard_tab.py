@@ -37,6 +37,14 @@ import base64
 # ─────────────────────────────────────────────────────────────────────────────
 # PALETTE
 # ─────────────────────────────────────────────────────────────────────────────
+To fix the logo issues, I have refined the get_team_logo_url function to be more "defensive." It now checks for the full team name first, then looks for an abbreviation, and ensures that the "Full-City" slugs you noted (like arizona or st-louis) are always used instead of the short codes.
+
+Here is the complete block for you to copy and paste:
+
+Python
+# ─────────────────────────────────────────────────────────────────────────────
+# PALETTE
+# ─────────────────────────────────────────────────────────────────────────────
 TEAL   = "#1D9E75"
 CORAL  = "#D85A30"
 BLUE   = "#378ADD"
@@ -48,23 +56,21 @@ TEXT   = "#e2e8f0"
 # ─────────────────────────────────────────────────────────────────────────────
 # TEAM LOGOS
 # ESPN CDN with verified slugs — several teams use full city names, not abbrevs.
-# White pill (_svg_pill_url) used for bar chart y-axis logos (xref='paper' — outside dark area).
-# Dark navy ring (_svg_dark_ring_url) used for logos plotted inside scatter charts (xref='x').
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "arizona",      # Updated to full city
+    "ARI": "arizona",      # Slug fix: full city
     "ATL": "atl",
     "BAL": "bal",
     "BOS": "bos",
-    "CHC": "chc",          # Standard Cubs abbrev
-    "CWS": "chw",          # Standard White Sox abbrev
+    "CHC": "chicago-cubs", # Slug fix
+    "CWS": "chicago-white-sox", 
     "CIN": "cin",
     "CLE": "cle",
     "COL": "col",
     "DET": "det",
     "HOU": "hou",
-    "KC":  "kansas-city",  # Updated to full city
+    "KC":  "kansas-city",  # Slug fix: full city
     "LAA": "laa",
     "LAD": "lad",
     "MIA": "mia",
@@ -75,14 +81,14 @@ _ABBREV_TO_ESPN: Dict[str, str] = {
     "OAK": "oak",
     "PHI": "phi",
     "PIT": "pit",
-    "SD":  "san-diego",    # Updated
-    "SF":  "san-francisco",# Updated
+    "SD":  "san-diego",    # Slug fix: full city
+    "SF":  "san-francisco",# Slug fix: full city
     "SEA": "sea",
-    "STL": "st-louis",     # Updated
-    "TB":  "tampa-bay",    # Updated
+    "STL": "st-louis",     # Slug fix: full city
+    "TB":  "tampa-bay",    # Slug fix: full city
     "TEX": "tex",
     "TOR": "tor",
-    "WSH": "washington",   # Updated
+    "WSH": "washington",   # Slug fix: full city
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
@@ -104,96 +110,79 @@ _FULL_TO_ABBREV: Dict[str, str] = {
     "Athletics": "OAK",
 }
 
+# Pre-computed dictionary for standard lookups
 TEAM_LOGOS: Dict[str, str] = {
-    abbrev: "https://a.espncdn.com/i/teamlogos/mlb/500/" + espn + ".png"
+    abbrev: f"https://a.espncdn.com/i/teamlogos/mlb/500/{espn}.png"
     for abbrev, espn in _ABBREV_TO_ESPN.items()
 }
 
-
 def get_team_logo_url(team: str) -> str:
-    """ESPN CDN URL — accepts 3-letter abbrev or full team name."""
-    abbrev = _FULL_TO_ABBREV.get(team, team.upper())
-    espn   = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
-    return "https://a.espncdn.com/i/teamlogos/mlb/500/" + espn + ".png"
-
+    """
+    Robustly returns the high-res ESPN logo URL.
+    Handles 'Arizona Diamondbacks', 'ARI', or 'ari'.
+    """
+    if not team:
+        return ""
+        
+    # 1. Try mapping from Full Name to Abbreviation
+    abbrev = _FULL_TO_ABBREV.get(team)
+    
+    # 2. If no full name match, treat input as an abbreviation
+    if not abbrev:
+        abbrev = team.upper()
+        
+    # 3. Get the specific ESPN slug for that abbreviation
+    slug = _ABBREV_TO_ESPN.get(abbrev)
+    
+    # 4. Fallback: if it's not in our maps, try the lowercase team name as a slug
+    if not slug:
+        slug = team.lower().replace(" ", "-")
+        
+    return f"https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
-    """
-    Wrap a logo URL in a WHITE-circle SVG and return a base64 data-URI.
-    Used for Plotly bar-chart y-axis logos (xref='paper') — these sit
-    outside the dark plot area so a white pill is appropriate.
-    """
+    """Wrap logo in a white circle for bar chart y-axis."""
     pad   = size // 6
     inner = size - pad * 2
     cx    = size // 2
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" '
-        'xmlns:xlink="http://www.w3.org/1999/xlink" '
-        'width="' + str(size) + '" height="' + str(size) + '">'
-        '<circle cx="' + str(cx) + '" cy="' + str(cx) + '" r="' + str(cx) + '" fill="white"/>'
-        '<image href="' + logo_url + '" '
-        'x="' + str(pad) + '" y="' + str(pad) + '" '
-        'width="' + str(inner) + '" height="' + str(inner) + '" '
-        'preserveAspectRatio="xMidYMid meet"/>'
-        '</svg>'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
+        f'<circle cx="{cx}" cy="{cx}" r="{cx}" fill="white"/>'
+        f'<image href="{logo_url}" x="{pad}" y="{pad}" width="{inner}" height="{inner}" '
+        'preserveAspectRatio="xMidYMid meet"/></svg>'
     )
     b64 = base64.b64encode(svg.encode()).decode()
     return "data:image/svg+xml;base64," + b64
-
 
 def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
-    """
-    Wrap a logo URL in a DARK-background circle with a subtle teal glow ring.
-    Used for logos rendered INSIDE scatter/chart plot areas (xref='x', yref='y')
-    where the background is dark — a white pill looks harsh and out of place.
-
-    Design: semi-transparent dark navy fill + 1.5px teal-ish stroke + logo centred.
-    The dark backing ensures all team logos (even light-coloured ones) remain
-    legible against the chart's dark background.
-    """
+    """Wrap logo in a dark ring for scatter plots."""
     pad   = size // 6
     inner = size - pad * 2
     cx    = size // 2
-    r     = cx - 1          # slightly inset so stroke isn't clipped
+    r     = cx - 1
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" '
-        'xmlns:xlink="http://www.w3.org/1999/xlink" '
-        'width="' + str(size) + '" height="' + str(size) + '">'
-        # Dark navy backing circle
-        '<circle cx="' + str(cx) + '" cy="' + str(cx) + '" r="' + str(r) + '" '
-        'fill="rgba(13,27,42,0.82)" '
-        'stroke="#1D9E75" stroke-width="1.5" stroke-opacity="0.55"/>'
-        # Logo image, padded inside
-        '<image href="' + logo_url + '" '
-        'x="' + str(pad) + '" y="' + str(pad) + '" '
-        'width="' + str(inner) + '" height="' + str(inner) + '" '
-        'preserveAspectRatio="xMidYMid meet"/>'
-        '</svg>'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
+        f'<circle cx="{cx}" cy="{cx}" r="{r}" fill="rgba(13,27,42,0.85)" '
+        'stroke="#1D9E75" stroke-width="1.5" stroke-opacity="0.6"/>'
+        f'<image href="{logo_url}" x="{pad}" y="{pad}" width="{inner}" height="{inner}" '
+        'preserveAspectRatio="xMidYMid meet"/></svg>'
     )
     b64 = base64.b64encode(svg.encode()).decode()
     return "data:image/svg+xml;base64," + b64
 
-
 def _logo_html(team: str, size: int = 28) -> str:
-    # Use the helper function to handle names OR abbreviations
-    url = get_team_logo_url(team) 
-    
+    """HTML for Streamlit UI cards and tables."""
+    url = get_team_logo_url(team)
     if not url:
-        return (
-            "<span style='font-size:0.75rem;font-weight:700;"
-            "color:var(--s-muted)'>" + team + "</span>"
-        )
+        return f"<span style='font-size:0.75rem;font-weight:700;color:#94a3b8'>{team}</span>"
+    
     pill = size + 10
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
-        f'background:#ffffff;border-radius:50%;'
-        f'width:{pill}px;height:{pill}px;'
-        f'flex-shrink:0;box-shadow:0 1px 6px rgba(0,0,0,0.18);'
-        f'border:1px solid rgba(0,0,0,0.06);">'
-        f'<img src="{url}" width="{size}" height="{size}" '
-        f'style="display:block;object-fit:contain;" alt="{team}" '
-        'onerror="this.style.display=\'none\';">'
-        '</span>'
+        f'background:#ffffff;border-radius:50%;width:{pill}px;height:{pill}px;'
+        f'flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.2);border:1px solid rgba(0,0,0,0.05);">'
+        f'<img src="{url}" width="{size}" height="{size}" style="display:block;object-fit:contain;" '
+        f'onerror="this.style.display=\'none\';"></span>'
     )
 
 
