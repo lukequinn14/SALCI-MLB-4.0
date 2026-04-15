@@ -254,8 +254,7 @@ def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -
         # Accept scoreboard or dark variants
         return cached_url
 
-    return get_team_logo_url(team, 
-
+    return get_team_logo_url(team, dark_bg=dark_bg)
 
 
 
