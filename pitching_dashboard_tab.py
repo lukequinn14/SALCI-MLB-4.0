@@ -92,6 +92,7 @@ _FULL_TO_ABBREV: Dict[str, str] = {
     "az": "ARI",
     # Other common short names
     "Athletics": "OAK",
+    "ATH": "OAK",
     "A's": "OAK",
     "Guardians": "CLE",
     "Nationals": "WSH",
