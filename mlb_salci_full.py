@@ -116,6 +116,16 @@ try:
 except ImportError:
     PITCHING_DASH_AVAILABLE = False
 
+# ---------------------------------------------------------------------------
+# Social Content Tab Integration
+# ---------------------------------------------------------------------------
+SOCIAL_CONTENT_AVAILABLE = False
+try:
+    from social_content_tab import render_social_content_tab
+    SOCIAL_CONTENT_AVAILABLE = True
+except ImportError:
+    pass  # Graceful — social content tab simply won't appear
+
 # ----------------------------
 # Version Info
 # ----------------------------
@@ -2414,6 +2424,11 @@ def main():
             st.success("💾 Reflection: Connected")
         else:
             st.info("⚠️ Reflection: Not available")
+
+        if SOCIAL_CONTENT_AVAILABLE:
+            st.success("📣 Social Content: Ready")
+        else:
+            st.info("📣 Social Content: Not loaded")
         
         st.markdown("---")
         
@@ -2493,10 +2508,10 @@ def main():
     current_season = get_current_season(selected_date)
     
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "⚾ Pitcher Analysis", "🏏 Hitter Matchups", "🎯 Best Bets",
         "🔥 Heat Maps", "📊 Charts & Share", "📈 Yesterday",
-        "🎯 Model Accuracy", "📡 Team Pitching"   # ← new
+        "🎯 Model Accuracy", "📡 Team Pitching", "📣 Social Content",
     ])
     
     # Fetch games
@@ -3011,17 +3026,15 @@ def main():
     all_pitcher_results.sort(key=lambda x: x["salci"], reverse=True)
     all_hitter_results.sort(key=lambda x: x["score"], reverse=True)
 
-    
+    # ── Build filtered_pitchers here (above all tabs) so every tab can access it ──
+    filtered_pitchers = [p for p in all_pitcher_results if p["salci"] >= min_salci]
 
-    
     # ======================
     # TAB 1: Pitcher Analysis
     # ======================
     with tab1:
         st.markdown("### 🎯 Pitcher Strikeout Predictions (SALCI v4)")
-        
-        filtered_pitchers = [p for p in all_pitcher_results if p["salci"] >= min_salci]
-        
+
         if not filtered_pitchers:
             st.info("No pitchers match your filters.")
         else:
@@ -3554,6 +3567,19 @@ def main():
     with tab8:
         if PITCHING_DASH_AVAILABLE:
             render_pitching_dashboard()
+
+    # ======================
+    # TAB 9: Social Content Generator
+    # ======================
+    with tab9:
+        if SOCIAL_CONTENT_AVAILABLE:
+            render_social_content_tab(filtered_pitchers)
+        else:
+            st.warning(
+                "⚠️ `social_content_tab.py` not found. "
+                "Place it in the same folder as `mlb_salci_full.py` "
+                "and add `ANTHROPIC_API_KEY` to `.streamlit/secrets.toml`."
+            )
 
 if __name__ == "__main__":
     main()
