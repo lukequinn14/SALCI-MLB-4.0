@@ -485,11 +485,12 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
     )
 
     # Logo images — dark ring style (in-graph, dark background)
+    # resolve_logo_url() validates any cached URL from team_pitching_stats
+    # and re-derives from the team name if the cached URL looks bad.
     logo_size = (v_max - v_min) * 0.065
     images = []
     for d in rows:
         url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
-        st.sidebar.write("TEAM:", d["team"], "LOGO:", url)
         if not url:
             continue
         images.append(dict(
@@ -501,12 +502,9 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
             layer="above",
         ))
 
-    # ⭐ ADD IMAGES *AFTER* TRACES — FIXES ARI LOGO
-    for img in images:
-        fig.add_layout_image(img)
-
     ann_cfg = dict(showarrow=False, font_size=9, font_color="rgba(148,163,184,0.55)")
     fig.update_layout(
+        images      = images,
         annotations = [
             _subtitle("Above diagonal = weaker bullpen than rotation · hover for values"),
             dict(x=v_max-0.05, y=v_min+0.05, text="Strong Bullpen",
@@ -524,7 +522,6 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
                       scaleanchor="x", scaleratio=1),
         **_base_layout(margin=dict(l=60, r=40, t=90, b=60)),
     )
-
     return fig
 
 
@@ -533,14 +530,14 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
 # CHART 2: Rankings — logo bars, green→red gradient
 # ─────────────────────────────────────────────────────────────────────────────
 
+Create and now do the same for these please!!
+
 def chart_rankings(data: List[Dict], stat_key: str, label: str,
                    lower_is_better: bool, n: int,
                    best_first: bool) -> Optional[go.Figure]:
-
     rows = _valid(data, stat_key)
     if not rows:
         return None
-
     rows   = sorted(rows, key=lambda x: x[stat_key], reverse=not lower_is_better)
     subset = rows[:n] if best_first else rows[-n:]
     if not best_first:
@@ -556,7 +553,6 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
     suffix = "%" if "pct" in stat_key else ""
     height = max(420, len(subset) * 54 + 100)
 
-    # BAR TRACE
     fig = go.Figure(go.Bar(
         y=teams, x=values, orientation="h",
         marker=dict(color=bar_colors, opacity=0.88,
@@ -567,10 +563,8 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
         hovertemplate=f"<b>%{{y}}</b><br>{label}: <b>%{{x:.2f}}{suffix}</b><extra></extra>",
     ))
 
-    # BUILD IMAGE OBJECTS
     images = []
     for team, logo_url in zip(teams, logos):
-        st.sidebar.write("TEAM:", team, "LOGO:", logo_url)
         if not logo_url:
             continue
         images.append(dict(
@@ -582,11 +576,6 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
             layer="above",
         ))
 
-    # ⭐ ADD IMAGES AFTER TRACES — FIXES ARI LOGO
-    for img in images:
-        fig.add_layout_image(img)
-
-    # RANK NUMBERS
     rank_anns = [dict(
         x=0, y=team, xref="x", yref="y",
         text="<b>#" + str(i+1) + "</b>", showarrow=False,
@@ -597,7 +586,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
     title_text = ("🏆 Best " if best_first else "⚠️ Worst ") + str(len(subset)) + " — " + label
 
     fig.update_layout(
-        height=height,
+        height=height, images=images,
         annotations=[_subtitle("MLB · " + str(datetime.today().year) + " Season")] + rank_anns,
         title=dict(text=title_text, font=dict(size=16, color=TEXT), x=0, xanchor="left"),
         xaxis=dict(gridcolor=SLATE, zeroline=False, tickfont=dict(size=11),
@@ -606,9 +595,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
         showlegend=False,
         **_base_layout(margin=dict(l=72, r=60, t=90, b=20)),
     )
-
     return fig
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -633,7 +620,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
 
     fig = go.Figure()
 
-    # QUADRANT SHADING
+    # Quadrant shading
     fig.add_shape(type="rect", xref="x", yref="y",
                   x0=avg_k, x1=x_max, y0=y_min, y1=avg_er,
                   fillcolor="rgba(29,158,117,0.07)", line_width=0, layer="below")
@@ -644,7 +631,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
     fig.add_vline(x=avg_k,  line_dash="dot", line_color="rgba(148,163,184,0.25)", line_width=1)
     fig.add_hline(y=avg_er, line_dash="dot", line_color="rgba(148,163,184,0.25)", line_width=1)
 
-    # INVISIBLE HOVER TRACE
+    # Invisible hover trace
     fig.add_trace(go.Scatter(
         x=k_vals, y=er_vals, mode="markers",
         marker=dict(size=34, opacity=0, color="rgba(0,0,0,0)"),
@@ -662,26 +649,21 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
         showlegend=False,
     ))
 
-    # LOGO IMAGES
+    # Logo SVG dark rings (in-graph, dark background)
+    # dark_bg=True → ESPN's /500-dark/ variant for dark-primary-logo teams
     lw = (x_max - x_min) * 0.058
     lh = (y_max - y_min) * 0.13
     images = []
     for d in rows:
         url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
-        st.sidebar.write("TEAM:", team, "LOGO:", logo_url)
         if not url:
             continue
         images.append(dict(
             source=url, xref="x", yref="y",
             x=d["k_pct"], y=d["era"],
             sizex=lw, sizey=lh,
-            xanchor="center", yanchor="middle",
-            layer="above",
+            xanchor="center", yanchor="middle", layer="above",
         ))
-
-    # ⭐ ADD IMAGES AFTER TRACES — FIXES ARI LOGO
-    for img in images:
-        fig.add_layout_image(img)
 
     ann_cfg = dict(showarrow=False, font_size=9, font_color="rgba(148,163,184,0.60)")
     annotations = [
@@ -697,8 +679,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
     ]
 
     fig.update_layout(
-        height=560,
-        annotations=annotations,
+        height=560, images=images, annotations=annotations,
         title=dict(text="K% vs ERA — Dominance Quadrant",
                    font=dict(size=16, color=TEXT), x=0, xanchor="left"),
         xaxis=dict(title="Team K%", tickformat=".1f", ticksuffix="%",
@@ -707,7 +688,6 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
                    gridcolor=SLATE, zeroline=False),
         **_base_layout(),
     )
-
     return fig
 
 
