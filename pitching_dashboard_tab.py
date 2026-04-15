@@ -49,9 +49,12 @@ TEXT   = "#e2e8f0"
 # TEAM LOGO HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── Abbreviation → ESPN CDN slug ─────────────────────────────────────────────
+# IMPORTANT: CWS → "chw" on ESPN (not "cws"). All others match the abbrev
+# lowercased EXCEPT the ones mapped explicitly here.
 _ABBREV_TO_ESPN: Dict[str, str] = {
     "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
-    "CHC": "chc", "CWS": "chw", "CIN": "cin",          # CWS → chw on ESPN
+    "CHC": "chc", "CWS": "chw", "CIN": "cin",
     "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
     "KC":  "kc",  "LAA": "laa", "LAD": "lad", "MIA": "mia",
     "MIL": "mil", "MIN": "min", "NYM": "nym", "NYY": "nyy",
@@ -60,92 +63,207 @@ _ABBREV_TO_ESPN: Dict[str, str] = {
     "TB":  "tb",  "TEX": "tex", "TOR": "tor", "WSH": "wsh",
 }
 
+# ── Name variants → canonical abbreviation ────────────────────────────────────
+# Covers BOTH the full official name AND every short/alternate form the MLB
+# Stats API, FanGraphs, or Baseball Savant might return.
+# Add new aliases here — never touch _ABBREV_TO_ESPN.
 _FULL_TO_ABBREV: Dict[str, str] = {
+    # Full official names
     "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL",
-    "Baltimore Orioles": "BAL", "Boston Red Sox": "BOS",
-    "Chicago Cubs": "CHC", "Chicago White Sox": "CWS",
-    "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE",
-    "Colorado Rockies": "COL", "Detroit Tigers": "DET",
-    "Houston Astros": "HOU", "Kansas City Royals": "KC",
-    "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD",
-    "Miami Marlins": "MIA", "Milwaukee Brewers": "MIL",
-    "Minnesota Twins": "MIN", "New York Mets": "NYM",
-    "New York Yankees": "NYY", "Oakland Athletics": "OAK",
-    "Philadelphia Phillies": "PHI", "Pittsburgh Pirates": "PIT",
-    "San Diego Padres": "SD", "San Francisco Giants": "SF",
-    "Seattle Mariners": "SEA", "St. Louis Cardinals": "STL",
-    "Tampa Bay Rays": "TB", "Texas Rangers": "TEX",
-    "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH",
-    "Athletics": "OAK",
+    "Baltimore Orioles": "BAL",    "Boston Red Sox": "BOS",
+    "Chicago Cubs": "CHC",         "Chicago White Sox": "CWS",
+    "Cincinnati Reds": "CIN",      "Cleveland Guardians": "CLE",
+    "Colorado Rockies": "COL",     "Detroit Tigers": "DET",
+    "Houston Astros": "HOU",       "Kansas City Royals": "KC",
+    "Los Angeles Angels": "LAA",   "Los Angeles Dodgers": "LAD",
+    "Miami Marlins": "MIA",        "Milwaukee Brewers": "MIL",
+    "Minnesota Twins": "MIN",      "New York Mets": "NYM",
+    "New York Yankees": "NYY",     "Oakland Athletics": "OAK",
+    "Philadelphia Phillies": "PHI","Pittsburgh Pirates": "PIT",
+    "San Diego Padres": "SD",      "San Francisco Giants": "SF",
+    "Seattle Mariners": "SEA",     "St. Louis Cardinals": "STL",
+    "Tampa Bay Rays": "TB",        "Texas Rangers": "TEX",
+    "Toronto Blue Jays": "TOR",    "Washington Nationals": "WSH",
+    # ── Nickname / short-form aliases (MLB API, FG, Savant variants) ──────────
+    # ARI — the most common mismatch; MLB API returns "D-backs" in some contexts
+    "Diamondbacks": "ARI",  "D-backs": "ARI",  "D-Backs": "ARI",
+    "Arizona": "ARI",
+    # Other common short names
+    "Athletics": "OAK",     "A's": "OAK",
+    "Guardians": "CLE",
+    "Nationals": "WSH",
+    "Cardinals": "STL",
+    "Brewers": "MIL",
+    "Padres": "SD",
+    "Giants": "SF",
+    "Mariners": "SEA",
+    "Rockies": "COL",
+    "Marlins": "MIA",
+    "Twins": "MIN",
+    "Rays": "TB",
+    "Yankees": "NYY",
+    "Mets": "NYM",
+    "Cubs": "CHC",
+    "White Sox": "CWS",
+    "Red Sox": "BOS",
+    "Blue Jays": "TOR",
+    "Royals": "KC",
+    "Angels": "LAA",
+    "Dodgers": "LAD",
+    "Phillies": "PHI",
+    "Pirates": "PIT",
+    "Rangers": "TEX",
+    "Orioles": "BAL",
+    "Braves": "ATL",
+    "Reds": "CIN",
+    "Tigers": "DET",
+    "Astros": "HOU",
 }
 
-# Teams whose PRIMARY logo is too dark to read on a dark dashboard background.
-# ESPN hosts a "/500-dark/" variant that contains a lighter, high-contrast
-# version of the logo (confirmed in ESPN's team API `logos` array with
-# rel=["full","dark"]). We use this variant for in-graph logos so they pop
-# on the navy/near-black chart backgrounds.
+# ── Teams needing ESPN's /500-dark/ path on dark chart backgrounds ─────────────
+# The dark variant is a lighter/higher-contrast version of the logo that ESPN
+# serves at the /500-dark/ CDN path (rel=["full","dark"] in ESPN's logos API).
+# Only add a team here if its *primary* logo is nearly invisible on navy/black.
 #
-# Teams verified to need the light alternative:
-#   COL - purple/black → silver/white alt much more visible
-#   SD  - brown/sand  → yellow "SD" on brown is very dark; dark variant is bright yellow
-#   NYY - pure navy   → dark variant renders with white contrast
-#   MIN - navy/red    → dark variant is brighter
-#   KC  - royal blue  → dark variant adds contrast
-#   PIT - black/gold  → dark variant shows gold prominently
-#   MIL - navy/gold   → dark variant is brighter
-#   CWS - black       → dark variant adds white contrast
-#   SF  - black/orange→ dark variant uses white ring
+#   COL - purple + black primary  → silver/white dark variant
+#   SD  - brown/sand primary      → bright yellow dark variant
+#   NYY - pure navy primary       → white-contrast dark variant
+#   MIN - navy/red primary        → brighter dark variant
+#   KC  - royal blue primary      → higher contrast dark variant
+#   PIT - black/gold primary      → gold-prominent dark variant
+#   MIL - navy/gold primary       → brighter dark variant
+#   CWS - black primary           → white-contrast dark variant
+#   SF  - black/orange primary    → white ring dark variant
+#
+# NOTE: ARI is intentionally NOT in this set — its red/black/teal serpiente
+# logo renders fine on dark backgrounds via the standard scoreboard path.
 _DARK_BACKGROUND_TEAMS = {
     "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF",
 }
 
+# ── Hardcoded URL overrides — last-resort escape hatch ───────────────────────
+# If ESPN ever restructures their CDN for a specific team, add an override here.
+# These bypass all slug logic entirely and return a known-good URL directly.
+# Format: abbrev → (standard_url, dark_bg_url)
+_URL_OVERRIDES: Dict[str, tuple] = {
+    # Example (not currently needed but here for reference):
+    # "ARI": (
+    #     "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/ari.png",
+    #     "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/ari.png",
+    # ),
+}
+
+
+def _resolve_abbrev(team: str) -> str:
+    """
+    Convert any team name/alias/abbreviation to a canonical 2-3 letter abbrev.
+
+    Resolution order:
+    1. Direct lookup in _FULL_TO_ABBREV (full names + aliases)
+    2. Already an abbrev — passthrough if in _ABBREV_TO_ESPN
+    3. Substring fuzzy match against _FULL_TO_ABBREV keys
+    4. Fallback: uppercase the input and hope for the best
+    """
+    team_clean = team.strip()
+
+    # 1. Direct alias match (most common path)
+    if team_clean in _FULL_TO_ABBREV:
+        return _FULL_TO_ABBREV[team_clean]
+
+    # 2. Already a valid abbreviation
+    upper = team_clean.upper()
+    if upper in _ABBREV_TO_ESPN:
+        return upper
+
+    # 3. Case-insensitive alias match
+    lower = team_clean.lower()
+    for alias, abbrev in _FULL_TO_ABBREV.items():
+        if alias.lower() == lower:
+            return abbrev
+
+    # 4. Substring fuzzy match — check if input is contained in a known full name
+    #    or a known full name is contained in the input. Use the longest match
+    #    to avoid "Cardinals" matching "White Sox Cardinals" type edge cases.
+    best_match, best_len = None, 0
+    for full_name, abbrev in _FULL_TO_ABBREV.items():
+        full_lower = full_name.lower()
+        if full_lower in lower or lower in full_lower:
+            if len(full_name) > best_len:
+                best_match, best_len = abbrev, len(full_name)
+    if best_match:
+        return best_match
+
+    # 5. Last resort — uppercase passthrough (may produce a broken URL, but
+    #    the onerror handler in the img tag will hide it gracefully)
+    return upper
+
+
 def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     """
-    Return the ESPN CDN logo URL for a team.
+    Return the ESPN CDN logo URL for any MLB team input.
 
     Parameters
     ----------
-    team    : Full team name ("Arizona Diamondbacks") or abbreviation ("ARI").
-    dark_bg : If True, use the light/alternate logo variant for teams whose
-              primary logo is hard to see on dark backgrounds (dark_bg=True
-              selects the ESPN '/500-dark/' path for those teams).
-              Use dark_bg=True for all in-graph scatter/bar chart logos.
-              Use dark_bg=False (default) for white-pill card logos where the
-              white circle provides its own background.
+    team    : Any form — full name, nickname, abbreviation, or API short name.
+              Examples: "Arizona Diamondbacks", "D-backs", "ARI", "ari"
+    dark_bg : When True, use ESPN's /500-dark/ path for teams whose primary
+              logo is hard to see on dark/navy chart backgrounds. Pass
+              dark_bg=True for all Plotly scatter/bar in-graph logos.
+              Pass dark_bg=False (default) for HTML card logos — the white
+              pill wrapper provides its own contrast.
 
-    ESPN CDN paths
-    --------------
-    Standard  : https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png
-    Scoreboard: https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
-    Dark/Light : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
+    ESPN CDN paths used
+    -------------------
+    Standard   : https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
+    Dark alt   : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
 
-    The scoreboard path is the most reliable for browser rendering.
-    The 500-dark path gives a light-optimised logo for dark backgrounds.
-    Both work in-browser (Streamlit); hotlink-blocked on direct Python fetch.
+    Both paths work in-browser (Streamlit). Direct server-side fetch returns 403
+    (ESPN hotlink protection) — this is expected and harmless.
     """
     if not team:
         return ""
-    team_clean = team.strip()
-    abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
-    # Fuzzy match if full name wasn't found
-    if len(abbrev) > 4 and " " in abbrev:
-        for full_name, short in _FULL_TO_ABBREV.items():
-            if full_name in team_clean or team_clean in full_name:
-                abbrev = short
-                break
+
+    abbrev = _resolve_abbrev(team)
+
+    # Hardcoded override wins over all slug logic
+    if abbrev in _URL_OVERRIDES:
+        std_url, dark_url = _URL_OVERRIDES[abbrev]
+        return dark_url if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS else std_url
 
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    # Choose variant
     if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
-        # Light logo optimised for dark chart backgrounds
         return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
-    else:
-        # Scoreboard path — same image quality, confirmed working for ARI and all teams
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+    return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+
+
+def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -> str:
+    """
+    Safe wrapper for use inside chart loops where data rows may carry a
+    pre-cached logo_url from team_pitching_stats.py.
+
+    Validation rules for accepting a cached URL:
+    1. Must contain the ESPN CDN hostname
+    2. Must contain a known-good slug from _ABBREV_TO_ESPN values
+       (rejects URLs with unresolved slugs like "diamondbacks", "d-backs", etc.)
+
+    If validation fails, the URL is re-derived fresh from the team name.
+
+    Usage:
+        url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
+    """
+    ESPN_HOST = "espncdn.com/i/teamlogos/mlb"
+    if cached_url and ESPN_HOST in cached_url:
+        # Check that the URL contains one of our known valid slugs
+        known_slugs = set(_ABBREV_TO_ESPN.values())  # e.g. {"ari", "atl", "chw", ...}
+        url_lower = cached_url.lower()
+        if any(f"/{slug}." in url_lower for slug in known_slugs):
+            return cached_url
+    return get_team_logo_url(team, dark_bg=dark_bg)
+
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
-    """Wrap logo in a white circle for bar chart y-axis."""
+    """Wrap a logo URL in a white-circle SVG data URI for Plotly bar y-axis."""
     pad, cx = size // 6, size // 2
     inner = size - pad * 2
     svg = (
@@ -156,8 +274,9 @@ def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     )
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
+
 def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
-    """Wrap logo in a dark ring for scatter plots."""
+    """Wrap a logo URL in a dark-navy ring SVG data URI for Plotly scatter."""
     pad, cx = size // 6, size // 2
     inner, r = size - pad * 2, cx - 1
     svg = (
@@ -169,9 +288,10 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
     )
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
+
 def _logo_html(team: str, size: int = 28) -> str:
-    """HTML for Streamlit UI cards. Uses standard logo — white pill provides contrast."""
-    url = get_team_logo_url(team, dark_bg=False)
+    """Render a white-pill logo for Streamlit HTML cards."""
+    url  = get_team_logo_url(team, dark_bg=False)
     pill = size + 10
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
@@ -406,12 +526,12 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
     )
 
     # Logo images — dark ring style (in-graph, dark background)
-    # Use dark_bg=True so teams with dark primary logos (NYY, COL, SD…)
-    # get their lighter ESPN alternate variant for better visibility.
+    # resolve_logo_url() validates any cached URL from team_pitching_stats
+    # and re-derives from the team name if the cached URL looks bad.
     logo_size = (v_max - v_min) * 0.065
     images = []
     for d in rows:
-        url = d.get("logo_url") or get_team_logo_url(d["team"], dark_bg=True)
+        url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
         if not url:
             continue
         images.append(dict(
@@ -463,7 +583,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
 
     teams  = [d["team"]   for d in subset]
     values = [d[stat_key] for d in subset]
-    logos  = [d.get("logo_url") or get_team_logo_url(d["team"], dark_bg=True)
+    logos  = [resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
               for d in subset]
 
     bar_colors = [_rank_color(i, len(subset), invert=not best_first)
@@ -573,7 +693,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
     lh = (y_max - y_min) * 0.13
     images = []
     for d in rows:
-        url = d.get("logo_url") or get_team_logo_url(d["team"], dark_bg=True)
+        url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
         if not url:
             continue
         images.append(dict(
@@ -725,7 +845,7 @@ def _render_stat_card(rows: List[Dict], stat_key: str, stat_label: str,
         val = d.get(stat_key)
         if val is None:
             continue
-        url       = d.get("logo_url") or get_team_logo_url(d["team"])
+        url       = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=False)
         rank_num  = "#" + str(i + 1)
         bar_pct   = _bw(val)
         bar_col   = _rank_color(i, n_rows, invert=not best_first)
