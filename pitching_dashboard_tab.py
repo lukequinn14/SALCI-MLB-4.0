@@ -238,7 +238,10 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
     if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
+        dark_url = f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
+        # Fallback to scoreboard if dark version doesn't exist
+        return dark_url
+
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
 
