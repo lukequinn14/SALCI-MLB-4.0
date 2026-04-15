@@ -264,42 +264,50 @@ def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -
 
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
-    """Wrap a logo URL in a white-circle SVG data URI for Plotly bar y-axis."""
-    pad, cx = size // 6, size // 2
+    pad = size // 6
     inner = size - pad * 2
+    cx = size // 2
+
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" height="{size}" style="width:auto;max-width:{size}px;object-fit:contain;">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
         f'<circle cx="{cx}" cy="{cx}" r="{cx}" fill="white"/>'
-        f'<image href="{logo_url}" x="{pad}" y="{pad}" height="{inner}" preserveAspectRatio="xMidYMid meet" />'
+        f'<image href="{logo_url}" x="{pad}" y="{pad}" height="{inner}" '
+        f'preserveAspectRatio="xMidYMid meet" />'
+        f'</svg>'
     )
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
 
 
 def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
-    """Wrap a logo URL in a dark-navy ring SVG data URI for Plotly scatter."""
-    pad, cx = size // 6, size // 2
-    inner, r = size - pad * 2, cx - 1
+    pad = size // 6
+    inner = size - pad * 2
+    cx = size // 2
+    r = cx - 1
+
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" height="{size}" style="width:auto;max-width:{size}px;object-fit:contain;">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
         f'<circle cx="{cx}" cy="{cx}" r="{r}" fill="rgba(13,27,42,0.85)" '
-        'stroke="#1D9E75" stroke-width="1.5" stroke-opacity="0.6"/>'
-        f'<image href="{logo_url}" x="{pad}" y="{pad}" height="{inner}" preserveAspectRatio="xMidYMid meet" />'
-        'preserveAspectRatio="xMidYMid meet"/></svg>'
+        f'stroke="#1D9E75" stroke-width="1.5" stroke-opacity="0.6"/>'
+        f'<image href="{logo_url}" x="{pad}" y="{pad}" height="{inner}" '
+        f'preserveAspectRatio="xMidYMid meet" />'
+        f'</svg>'
     )
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
+
 def _logo_html(team: str, size: int = 28) -> str:
-    """Render a white-pill logo for Streamlit HTML cards."""
     url  = get_team_logo_url(team, dark_bg=False)
     pill = size + 10
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
         f'background:#ffffff;border-radius:50%;width:{pill}px;height:{pill}px;'
         f'flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.2);border:1px solid rgba(0,0,0,0.05);">'
-        f'<img src="{url}" height="{size}" style="width:auto;max-width:{size}px;object-fit:contain;" style="display:block;object-fit:contain;" '
+        f'<img src="{url}" height="{size}" style="width:auto;max-width:{size}px;object-fit:contain;display:block;" '
         f'onerror="this.style.display=\'none\';"></span>'
     )
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS — light/dark adaptive
 # ─────────────────────────────────────────────────────────────────────────────
