@@ -3042,7 +3042,7 @@ def main():
             
             view_mode = st.radio(
                 "View Mode",
-                ["📊 Component Table", "🎴 Pitcher Cards"],
+                ["🎴 Pitcher Cards", "📊 Component Table"],
                 horizontal=True,
                 index=0
             )
@@ -3105,16 +3105,6 @@ def main():
                 st.caption("**Source:** 🎯 = Real Statcast physics data | 📊 = Proxy metrics from MLB Stats API")
             
             else:
-                # Card view
-                for result in filtered_pitchers:
-                    if result.get("lineup_confirmed"):
-                        st.markdown(f"<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>", 
-                                   unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>", 
-                                   unsafe_allow_html=True)
-                    render_pitcher_card(result)
-
                 # ── Head-to-Head Matchup Cards (one per game) ──────────────
                 game_pks_rendered = set()
                 matchup_games = []
@@ -3136,6 +3126,16 @@ def main():
                     )
                     for game_obj in matchup_games_sorted:
                         render_matchup_card(game_obj, filtered_pitchers, lineup_status, all_hitter_results)
+
+                # Card view
+                for result in filtered_pitchers:
+                    if result.get("lineup_confirmed"):
+                        st.markdown(f"<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>", 
+                                   unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>", 
+                                   unsafe_allow_html=True)
+                    render_pitcher_card(result)
 
             render_compact_summary(all_pitcher_results)
             
