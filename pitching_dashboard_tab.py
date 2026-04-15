@@ -84,12 +84,12 @@ _FULL_TO_ABBREV: Dict[str, str] = {
     "Seattle Mariners": "SEA",     "St. Louis Cardinals": "STL",
     "Tampa Bay Rays": "TB",        "Texas Rangers": "TEX",
     "Toronto Blue Jays": "TOR",    "Washington Nationals": "WSH",
-    # ── Nickname / short-form aliases (MLB API, FG, Savant variants) ──────────
-    # ARI — the most common mismatch; MLB API returns "D-backs" in some contexts
-    "Diamondbacks": "ARI",  "D-backs": "ARI",  "D-Backs": "ARI",
+    "Diamondbacks": "ARI",
+    "D-backs": "ARI",
+    "D-Backs": "ARI",
     "Arizona": "ARI",
-    "AZ": "ARI",
-    "az": "ARI",
+    "AZ": "ARI",  
+    "az": "ARi",
     # Other common short names
     "Athletics": "OAK",
     "ATH": "OAK",
