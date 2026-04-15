@@ -98,53 +98,28 @@ _FULL_TO_ABBREV: Dict[str, str] = {
 #   CWS - black       → dark variant adds white contrast
 #   SF  - black/orange→ dark variant uses white ring
 _DARK_BACKGROUND_TEAMS = {
-    "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF",
+    "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF", "ARI", "SEA", "BAL"
 }
 
 def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
-    """
-    Return the ESPN CDN logo URL for a team.
-
-    Parameters
-    ----------
-    team    : Full team name ("Arizona Diamondbacks") or abbreviation ("ARI").
-    dark_bg : If True, use the light/alternate logo variant for teams whose
-              primary logo is hard to see on dark backgrounds (dark_bg=True
-              selects the ESPN '/500-dark/' path for those teams).
-              Use dark_bg=True for all in-graph scatter/bar chart logos.
-              Use dark_bg=False (default) for white-pill card logos where the
-              white circle provides its own background.
-
-    ESPN CDN paths
-    --------------
-    Standard  : https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png
-    Scoreboard: https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
-    Dark/Light : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
-
-    The scoreboard path is the most reliable for browser rendering.
-    The 500-dark path gives a light-optimised logo for dark backgrounds.
-    Both work in-browser (Streamlit); hotlink-blocked on direct Python fetch.
-    """
     if not team:
         return ""
+    
     team_clean = team.strip()
+    # 1. Resolve Abbreviation
     abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
-    # Fuzzy match if full name wasn't found
-    if len(abbrev) > 4 and " " in abbrev:
-        for full_name, short in _FULL_TO_ABBREV.items():
-            if full_name in team_clean or team_clean in full_name:
-                abbrev = short
-                break
-
+    
+    # 2. Get the correct CDN slug
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    # Choose variant
-    if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
-        # Light logo optimised for dark chart backgrounds
+    # 3. Path Selection
+    # If dark_bg is True, we attempt to use the '500-dark' variant for better contrast.
+    # This directory contains white-bordered or lightened versions of the logos.
+    if dark_bg:
         return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
-    else:
-        # Scoreboard path — same image quality, confirmed working for ARI and all teams
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+    
+    # Standard fallback
+    return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     """Wrap logo in a white circle for bar chart y-axis."""
