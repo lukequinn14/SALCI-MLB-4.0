@@ -52,14 +52,28 @@ TEXT   = "#e2e8f0"
 # ESPN slug map — every abbreviation maps to its verified ESPN CDN slug.
 # CWS must be "chw" (ESPN uses CHW, not CWS). All others are lowercase abbrev.
 _ABBREV_TO_ESPN = {
-    "ARI": ["ari", "az", "arizona"], "ATL": ["atl"], "BAL": ["bal"], "BOS": ["bos"],
+    "ARI": ["ari", "az"], "ATL": ["atl"], "BAL": ["bal"], "BOS": ["bos"],
     "CHC": ["chc"], "CWS": ["chw"], "CIN": ["cin"],          # CWS → chw on ESPN
     "CLE": ["cle"], "COL": ["col"], "DET": ["det"], "HOU": "hou"],
-    "KC":  ["kc", "kansas-city"],  "LAA": ["laa"], "LAD": ["lad"], "MIA": "mia"],
+    "KC":  ["kc"],  "LAA": ["laa"], "LAD": ["lad"], "MIA": "mia"],
     "MIL": ["mil"], "MIN": ["min"], "NYM": ["nym"], "NYY": "nyy"],
     "OAK": ["oak"], "PHI": ["phi"], "PIT": ["pit"], "SD":  "sd"],
     "SF":  ["sf"],  "SEA": ["sea"], "STL": ["stl"],
     "TB":  ["tb"],  "TEX": ["tex"], "TOR": ["tor"], "WSH": ["wsh"],
+}
+
+MLB_TEAM_ABBREV = {
+    "Arizona Diamondbacks": "ari", "Atlanta Braves": "atl", "Baltimore Orioles": "bal",
+    "Boston Red Sox": "bos", "Chicago Cubs": "chc", "Chicago White Sox": "cws",
+    "Cincinnati Reds": "cin", "Cleveland Guardians": "cle", "Colorado Rockies": "col",
+    "Detroit Tigers": "det", "Houston Astros": "hou", "Kansas City Royals": "kc",
+    "Los Angeles Angels": "laa", "Los Angeles Dodgers": "lad", "Miami Marlins": "mia",
+    "Milwaukee Brewers": "mil", "Minnesota Twins": "min", "New York Mets": "nym",
+    "New York Yankees": "nyy", "Oakland Athletics": "oak", "Philadelphia Phillies": "phi",
+    "Pittsburgh Pirates": "pit", "San Diego Padres": "sd", "San Francisco Giants": "sf",
+    "Seattle Mariners": "sea", "St. Louis Cardinals": "stl", "Tampa Bay Rays": "tb",
+    "Texas Rangers": "tex", "Toronto Blue Jays": "tor", "Washington Nationals": "was",
+    "Athletics": "oak",
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
