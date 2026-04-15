@@ -51,15 +51,15 @@ TEXT   = "#e2e8f0"
 
 # ESPN slug map — every abbreviation maps to its verified ESPN CDN slug.
 # CWS must be "chw" (ESPN uses CHW, not CWS). All others are lowercase abbrev.
-_ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
-    "CHC": "chc", "CWS": "chw", "CIN": "cin",          # CWS → chw on ESPN
-    "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
-    "KC":  "kc",  "LAA": "laa", "LAD": "lad", "MIA": "mia",
-    "MIL": "mil", "MIN": "min", "NYM": "nym", "NYY": "nyy",
-    "OAK": "oak", "PHI": "phi", "PIT": "pit", "SD":  "sd",
-    "SF":  "sf",  "SEA": "sea", "STL": "stl",
-    "TB":  "tb",  "TEX": "tex", "TOR": "tor", "WSH": "wsh",
+_ABBREV_TO_ESPN = {
+    "ARI": ["ari", "az", "arizona"], "ATL": ["atl"], "BAL": ["bal"], "BOS": ["bos"],
+    "CHC": ["chc"], "CWS": ["chw"], "CIN": ["cin"],          # CWS → chw on ESPN
+    "CLE": ["cle"], "COL": ["col"], "DET": ["det"], "HOU": "hou"],
+    "KC":  ["kc", "kansas-city"],  "LAA": ["laa"], "LAD": ["lad"], "MIA": "mia"],
+    "MIL": ["mil"], "MIN": ["min"], "NYM": ["nym"], "NYY": "nyy"],
+    "OAK": ["oak"], "PHI": ["phi"], "PIT": ["pit"], "SD":  "sd"],
+    "SF":  ["sf"],  "SEA": ["sea"], "STL": ["stl"],
+    "TB":  ["tb"],  "TEX": ["tex"], "TOR": ["tor"], "WSH": ["wsh"],
 }
 
 _FULL_TO_ABBREV: Dict[str, str] = {
