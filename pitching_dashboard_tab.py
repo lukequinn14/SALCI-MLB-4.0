@@ -95,7 +95,8 @@ def get_team_logo_url(team: str) -> str:
     
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
     # Final safety check for common variations
-    if slug == "cws": slug = "chw" # Both often work, but CHW is very common for ESPN
+    if slug == "cws": slug = "chw"
+    if slug == "ari": slug = "ari" # Ensure ARI is always lowercase
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/{slug}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
@@ -368,7 +369,7 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
         if not url:
             continue
         images.append(dict(
-            source  = _svg_dark_ring_url(url, 48),
+            source  = url,
             xref="x", yref="y",
             x=d["starter_era"], y=d["bullpen_era"],
             sizex=logo_size, sizey=logo_size,
@@ -438,7 +439,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
         if not logo_url:
             continue
         images.append(dict(
-            source=_svg_pill_url(logo_url, 40),
+            source=logo_url,
             xref="paper", yref="y",
             x=-0.01, y=team,
             sizex=0.075, sizey=0.80,
@@ -528,7 +529,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
         if not url:
             continue
         images.append(dict(
-            source=_svg_dark_ring_url(url, 44), xref="x", yref="y",
+            source=url, xref="x", yref="y",
             x=d["k_pct"], y=d["era"],
             sizex=lw, sizey=lh,
             xanchor="center", yanchor="middle", layer="above",
