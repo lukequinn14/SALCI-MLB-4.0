@@ -565,7 +565,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
     # BUILD IMAGE OBJECTS
     images = []
     for team, logo_url in zip(teams, logos):
-        print("TEAM:", team, "LOGO:", logo_url)
+        st.sidebar.write("TEAM:", team, "LOGO:", logo_url)
         if not logo_url:
             continue
         images.append(dict(
@@ -663,7 +663,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
     images = []
     for d in rows:
         url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
-        print("TEAM:", d["team"], "LOGO:", url)
+        st.sidebar.write("TEAM:", team, "LOGO:", logo_url)
         if not url:
             continue
         images.append(dict(
