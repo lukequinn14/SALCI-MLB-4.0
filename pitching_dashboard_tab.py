@@ -124,7 +124,7 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
     
     # 2. Get the correct CDN slug
-    slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
+    slug = MLB_TEAM_ABBREV.get(abbrev, abbrev.lower())
 
     # 3. Path Selection
     # If dark_bg is True, we attempt to use the '500-dark' variant for better contrast.
