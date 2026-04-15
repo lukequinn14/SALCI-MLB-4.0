@@ -424,7 +424,7 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
     logo_size = (v_max - v_min) * 0.065
     images = []
     for d in rows:
-        url = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        url = d.get("logo_url") or get_team_logo_url(d["team"])
         if not url:
             continue
         images.append(dict(
@@ -476,7 +476,7 @@ def chart_rankings(data: List[Dict], stat_key: str, label: str,
 
     teams  = [d["team"]   for d in subset]
     values = [d[stat_key] for d in subset]
-    logos  = [d.get("logo_url") or TEAM_LOGOS.get(d["team"], "") for d in subset]
+    logos  = [d.get("logo_url") or get_team_logo_url(d["team"]) for d in subset]
 
     bar_colors = [_rank_color(i, len(subset), invert=not best_first)
                   for i in range(len(subset))]
@@ -584,7 +584,7 @@ def chart_kpct_vs_era_plus(data: List[Dict]) -> Optional[go.Figure]:
     lh = (y_max - y_min) * 0.13
     images = []
     for d in rows:
-        url = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        url = d.get("logo_url") or get_team_logo_url(d["team"])
         if not url:
             continue
         images.append(dict(
@@ -736,7 +736,7 @@ def _render_stat_card(rows: List[Dict], stat_key: str, stat_label: str,
         val = d.get(stat_key)
         if val is None:
             continue
-        url       = d.get("logo_url") or TEAM_LOGOS.get(d["team"], "")
+        url       = d.get("logo_url") or get_team_logo_url(d["team"])
         rank_num  = "#" + str(i + 1)
         bar_pct   = _bw(val)
         bar_col   = _rank_color(i, n_rows, invert=not best_first)
