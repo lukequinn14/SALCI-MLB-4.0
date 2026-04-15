@@ -1,194 +1,324 @@
+#!/usr/bin/env python3
 """
-data_loader.py — SALCI Smart Data Loader
-=========================================
-Reads pre-computed JSON files written by the nightly/day-of GitHub Actions
-scripts instead of running live Statcast computation on every page load.
+SALCI Data Loader  ·  v2.0
+============================
+Two-stage pre-compute fast-path for mlb_salci_full.py.
 
-Priority:
-  1. daily_final.json  — lineup-confirmed SALCI scores (most accurate)
-  2. daily_base.json   — pre-computed without lineups (fast fallback)
-  3. returns (None, "live") — caller runs live compute
+Stage 1  (Nightly · ~2 AM ET)
+    generate_daily_base.py  → data/daily/YYYY-MM-DD_base.json
+    Heavy Statcast metrics: Stuff+, Location+, workload baselines.
+    No lineups yet — matchup_score uses team-level K%.
 
-Set SALCI_DATA_URL in Streamlit secrets to point at your GitHub repo's
-raw-content base URL:
-  SALCI_DATA_URL = "https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main"
+Stage 2  (Day-of · every 20 min from 11 AM ET)
+    generate_daily_final.py → data/daily/YYYY-MM-DD_final.json
+    Upgrades matchup_score to individual hitter K% once lineup confirmed.
+    lineup_confirmed = True for at least one game.
+
+Load priority
+-------------
+    daily_final.json  (highest quality)
+    daily_base.json   (nightly fallback)
+    None              (falls back to mlb_salci_full.py live compute)
+
+Public API
+----------
+load_todays_data(date_str)  → (data_dict | None, source_label)
+    Tries final → base → GitHub raw → None.
+
+get_pitchers(data_dict)     → list[dict]
+    Extracts the ``pitchers`` list from a loaded data dict.
+
+source_banner(data, source, live_confirmed_count, total_pitchers)
+    → (message, level)
+    Returns a user-facing status message and a Streamlit level string
+    ("success" | "info" | "warning").
+
+save_precomputed(date_str, pitchers, stage, metadata)  → bool
+    Writes a stage JSON file (used by GitHub Actions scripts).
+
+Shared schema  (single pitcher dict)
+--------------------------------------
+{
+    "pitcher":           str,
+    "pitcher_id":        int,
+    "team":              str,
+    "opponent":          str,
+    "opponent_id":       int,
+    "game_pk":           int,
+    "salci":             float,
+    "salci_grade":       str,          # S / A / B+ / B / C / D / F
+    "expected":          float,        # projected Ks
+    "k_line":            str | None,   # e.g. "5.5" — best +EV line
+    "odds":              int | None,   # American odds for k_line
+    "model_prob":        float | None, # calibrated prob [0,1]
+    "edge":              float | None, # model_prob – implied_prob (pct pts)
+    "lines":             dict,         # {"5": 72, "6": 48, ...}
+    "k_lines":           dict,         # alias of lines (backward compat)
+    "stuff_score":       float | None,
+    "matchup_score":     float | None,
+    "workload_score":    float | None,
+    "location_score":    float | None,
+    "stuff_breakdown":   dict,         # per-pitch Stuff+ (optional)
+    "profile_type":      str,
+    "lineup_confirmed":  bool,
+    "is_statcast":       bool,
+    "stage":             str,          # "base" | "final"
+    "generated_at":      str,          # ISO datetime
+}
 """
 
 import json
 import os
 import requests
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Optional
 
-_GITHUB_RAW_BASE = os.environ.get("SALCI_DATA_URL", "")
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 
-BASE_FILE  = "daily_base.json"
-FINAL_FILE = "daily_final.json"
-REQUEST_TIMEOUT = 8
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DAILY_DIR = os.path.join(_HERE, "data", "daily")
 
 
-def _load_local(filename: str) -> Optional[Dict]:
-    if os.path.exists(filename):
+def _local_path(date_str: str, stage: str) -> str:
+    """Return local filesystem path for a given date + stage."""
+    return os.path.join(DAILY_DIR, f"{date_str}_{stage}.json")
+
+
+def _github_raw_url(date_str: str, stage: str) -> Optional[str]:
+    """
+    Build a GitHub raw URL if GH_REPO is set in env or st.secrets.
+    Returns None if GH_REPO is not configured.
+    """
+    repo = os.environ.get("GH_REPO", "")
+    if not repo:
         try:
-            with open(filename) as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[data_loader] Local load failed for {filename}: {e}")
-    return None
-
-
-def _load_remote(filename: str) -> Optional[Dict]:
-    if not _GITHUB_RAW_BASE:
+            import streamlit as st  # noqa: F401 — optional dep
+            repo = st.secrets.get("GH_REPO", "")
+        except Exception:
+            pass
+    if not repo:
         return None
-    url = f"{_GITHUB_RAW_BASE.rstrip('/')}/{filename}"
+    return (
+        f"https://raw.githubusercontent.com/{repo}/main/"
+        f"data/daily/{date_str}_{stage}.json"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Core loader
+# ---------------------------------------------------------------------------
+
+def _try_load_local(path: str) -> Optional[dict]:
+    if not os.path.exists(path):
+        return None
     try:
-        r = requests.get(url, timeout=REQUEST_TIMEOUT)
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _try_load_remote(url: str) -> Optional[dict]:
+    if not url:
+        return None
+    try:
+        r = requests.get(url, timeout=10)
         if r.status_code == 200:
             return r.json()
-        print(f"[data_loader] Remote HTTP {r.status_code} for {url}")
-    except Exception as e:
-        print(f"[data_loader] Remote load failed for {url}: {e}")
+    except Exception:
+        pass
     return None
 
 
-def _load(filename: str) -> Optional[Dict]:
-    return _load_local(filename) or _load_remote(filename)
-
-
-def load_todays_data(today: str) -> Tuple[Optional[Dict], str]:
+def load_todays_data(date_str: Optional[str] = None) -> tuple[Optional[dict], str]:
     """
-    Load the best available pre-computed data for today.
+    Load pre-computed pitcher data for a given date.
 
-    Parameters
-    ----------
-    today : str  — date in YYYY-MM-DD format
+    Priority: local final → remote final → local base → remote base → None.
 
     Returns
     -------
-    (data, source)  where source is "final" | "base" | "live"
-    "live" means no JSON found — caller should run live compute.
+    (data_dict, source_label)
+        data_dict   : loaded JSON dict or None
+        source_label: "daily_final" | "daily_base" | "none"
     """
-    final = _load(FINAL_FILE)
-    if final and final.get("date") == today:
-        return final, "final"
+    if date_str is None:
+        date_str = datetime.today().strftime("%Y-%m-%d")
 
-    base = _load(BASE_FILE)
-    if base and base.get("date") == today:
-        return base, "base"
+    for stage in ("final", "base"):
+        # Local first (Streamlit Cloud deploy → files are in the repo)
+        data = _try_load_local(_local_path(date_str, stage))
+        if data:
+            return data, f"daily_{stage}"
 
-    return None, "live"
+        # Remote GitHub raw fallback (useful during local development)
+        url = _github_raw_url(date_str, stage)
+        if url:
+            data = _try_load_remote(url)
+            if data:
+                return data, f"daily_{stage}"
 
-
-def get_pitchers(data: Dict) -> List[Dict]:
-    """
-    Extract and normalise pitcher list from a loaded data file.
-
-    Ensures every pitcher dict has the fields that mlb_salci_full.py's
-    reconciliation patch requires.  Without these the patch silently skips
-    every pitcher (via `if game_pk is None: continue`) and lineup_confirmed
-    is never updated from the stale JSON value.
-    """
-    pitchers = []
-    for raw in data.get("pitchers", []):
-        p = dict(raw)  # shallow copy — don't mutate the source
-
-        # ── Canonical name / id aliases ──────────────────────────────────────
-        if "pitcher" not in p and "pitcher_name" in p:
-            p["pitcher"] = p["pitcher_name"]
-        if "pitcher_id" not in p and "pid" in p:
-            p["pitcher_id"] = p["pid"]
-
-        # ── game_pk — CRITICAL for reconciliation patch ──────────────────────
-        # Stage 1 scripts may store this as "gamePk" or "game_id"
-        if p.get("game_pk") is None:
-            p["game_pk"] = p.get("gamePk") or p.get("game_id")
-
-        # ── opponent_id — needed for matchup upgrade path ────────────────────
-        if p.get("opponent_id") is None:
-            p["opponent_id"] = p.get("opp_id") or p.get("opponent_team_id")
-
-        # ── k_lines / lines — UI reads both keys ─────────────────────────────
-        if "k_lines" in p and "lines" not in p:
-            p["lines"] = p["k_lines"]
-        elif "lines" in p and "k_lines" not in p:
-            p["k_lines"] = p["lines"]
-
-        # ── lineup_confirmed — always a bool ────────────────────────────────
-        p["lineup_confirmed"] = bool(p.get("lineup_confirmed", False))
-
-        # ── Numeric defaults so SALCI re-calc never crashes on None ──────────
-        _defaults = {
-            "stuff_score":       100.0,
-            "location_score":    100.0,
-            "workload_score":     50.0,
-            "projected_ip":        5.5,
-            "salci":              50.0,
-            "expected":            5.0,
-            "floor":               4.0,
-            "floor_confidence":   65.0,
-        }
-        for field, default in _defaults.items():
-            if p.get(field) is None:
-                p[field] = default
-
-        pitchers.append(p)
-    return pitchers
+    return None, "none"
 
 
-def data_freshness_label(data: Dict) -> str:
-    ts = data.get("updated_at") or data.get("generated_at", "")
-    if not ts:
-        return "unknown"
-    try:
-        dt = datetime.fromisoformat(ts)
-        minutes = int((datetime.now() - dt).total_seconds() / 60)
-        if minutes < 1:    return "just now"
-        if minutes < 60:   return f"{minutes}m ago"
-        if minutes < 1440: return f"{minutes // 60}h ago"
-        return f"{minutes // 1440}d ago"
-    except Exception:
-        return ts[:16]
+# ---------------------------------------------------------------------------
+# Accessors
+# ---------------------------------------------------------------------------
+
+def get_pitchers(data: dict) -> list:
+    """Extract the pitchers list from a loaded data dict."""
+    if not data:
+        return []
+    return data.get("pitchers", [])
 
 
-def confirmed_lineup_count(data: Dict) -> int:
-    return sum(1 for p in data.get("pitchers", []) if p.get("lineup_confirmed"))
+def get_metadata(data: dict) -> dict:
+    """Return the metadata block from a loaded data dict."""
+    if not data:
+        return {}
+    return data.get("metadata", {})
 
+
+# ---------------------------------------------------------------------------
+# Status banner
+# ---------------------------------------------------------------------------
 
 def source_banner(
-    data: Dict,
+    data: dict,
     source: str,
-    live_confirmed_count: Optional[int] = None,
-    total_pitchers: Optional[int] = None,
-) -> Tuple[str, str]:
+    live_confirmed_count: int = 0,
+    total_pitchers: int = 0,
+) -> tuple[str, str]:
     """
-    Returns (message, streamlit_level) for st.success / st.info / st.warning.
+    Build a user-facing status message for the data source.
+
+    Returns (message_str, streamlit_level).
+    streamlit_level is one of: "success", "info", "warning".
+    """
+    if source == "none" or data is None:
+        return (
+            "⚠️ No pre-computed data found — running live compute (slower).",
+            "warning",
+        )
+
+    meta = get_metadata(data)
+    gen_at = meta.get("generated_at", "unknown")
+    lineup_count = meta.get("lineup_confirmed_count", 0)
+    statcast_count = meta.get("statcast_count", 0)
+    stage = meta.get("stage", source.replace("daily_", ""))
+
+    # Try to make the timestamp human-friendly
+    try:
+        dt = datetime.fromisoformat(gen_at)
+        gen_at_str = dt.strftime("%-I:%M %p ET")
+    except Exception:
+        gen_at_str = gen_at[:16] if gen_at else "unknown"
+
+    pitcher_str = f"{total_pitchers} pitchers" if total_pitchers else ""
+    statcast_str = f" · {statcast_count} Statcast" if statcast_count else ""
+
+    if stage == "final":
+        confirmed_str = f"{live_confirmed_count} lineups confirmed" if live_confirmed_count else f"{lineup_count} lineups confirmed at build time"
+        msg = (
+            f"✅ **Pre-computed (Stage 2 — Final)** · Built {gen_at_str}"
+            f" · {confirmed_str}{statcast_str}"
+            + (f" · {pitcher_str}" if pitcher_str else "")
+        )
+        return msg, "success"
+    else:
+        msg = (
+            f"📦 **Pre-computed (Stage 1 — Nightly Base)** · Built {gen_at_str}"
+            f" · lineups not yet confirmed{statcast_str}"
+            + (f" · {pitcher_str}" if pitcher_str else "")
+            + " · Will upgrade to Final once lineups drop."
+        )
+        return msg, "info"
+
+
+# ---------------------------------------------------------------------------
+# Writer (used by GitHub Actions scripts)
+# ---------------------------------------------------------------------------
+
+def save_precomputed(
+    date_str: str,
+    pitchers: list,
+    stage: str,
+    metadata: Optional[dict] = None,
+) -> bool:
+    """
+    Write a stage JSON file.
 
     Parameters
     ----------
-    data                 : the pre-computed dict returned by load_todays_data()
-    source               : "final" | "base" | "live"
-    live_confirmed_count : number of GAMES with confirmed lineups per live MLB API.
-                           When passed, this replaces the stale JSON count so the
-                           banner always reflects current reality.
-    total_pitchers       : total pitcher count after get_pitchers() — pass
-                           len(all_pitcher_results) for an accurate denominator.
+    date_str   : "YYYY-MM-DD"
+    pitchers   : list of pitcher dicts (see schema above)
+    stage      : "base" | "final"
+    metadata   : optional extra metadata to include
+
+    Returns True on success.
     """
-    freshness = data_freshness_label(data)
+    os.makedirs(DAILY_DIR, exist_ok=True)
+    path = _local_path(date_str, stage)
 
-    # Prefer live count (real-time) over stale JSON count
-    if live_confirmed_count is not None:
-        confirmed_str = f"{live_confirmed_count} games confirmed"
-    else:
-        confirmed = confirmed_lineup_count(data)
-        total     = total_pitchers if total_pitchers is not None else len(data.get("pitchers", []))
-        confirmed_str = f"{confirmed}/{total} lineups locked"
+    meta = {
+        "date": date_str,
+        "stage": stage,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "pitcher_count": len(pitchers),
+        "lineup_confirmed_count": sum(1 for p in pitchers if p.get("lineup_confirmed")),
+        "statcast_count": sum(1 for p in pitchers if p.get("is_statcast")),
+    }
+    if metadata:
+        meta.update(metadata)
 
-    if source == "final":
-        msg = f"✅ Lineup-confirmed data · {confirmed_str} · updated {freshness}"
-        return msg, "success"
+    payload = {
+        "metadata": meta,
+        "pitchers": pitchers,
+    }
 
-    if source == "base":
-        msg = f"📋 Pre-computed base data · {confirmed_str} · updated {freshness} · lineups patched live"
-        return msg, "info"
+    try:
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+        return True
+    except Exception as exc:
+        print(f"[data_loader] save_precomputed failed: {exc}")
+        return False
 
-    return "⚠️ No pre-computed data — running live calculations", "warning"
+
+# ---------------------------------------------------------------------------
+# Cleanup helper (keep last N days, prune old files)
+# ---------------------------------------------------------------------------
+
+def prune_old_files(keep_days: int = 7) -> int:
+    """Delete daily JSON files older than keep_days. Returns count deleted."""
+    if not os.path.exists(DAILY_DIR):
+        return 0
+    cutoff = datetime.today() - timedelta(days=keep_days)
+    deleted = 0
+    for fname in os.listdir(DAILY_DIR):
+        if not fname.endswith(".json"):
+            continue
+        date_part = fname[:10]  # "YYYY-MM-DD"
+        try:
+            fdate = datetime.strptime(date_part, "%Y-%m-%d")
+            if fdate < cutoff:
+                os.remove(os.path.join(DAILY_DIR, fname))
+                deleted += 1
+        except ValueError:
+            pass
+    return deleted
+
+
+if __name__ == "__main__":
+    import sys
+    date = sys.argv[1] if len(sys.argv) > 1 else datetime.today().strftime("%Y-%m-%d")
+    data, source = load_todays_data(date)
+    msg, level = source_banner(data, source, total_pitchers=len(get_pitchers(data)))
+    print(f"Source  : {source}")
+    print(f"Level   : {level}")
+    print(f"Message : {msg}")
+    if data:
+        print(f"Pitchers: {len(get_pitchers(data))}")
+        print(f"Metadata: {get_metadata(data)}")
