@@ -485,6 +485,7 @@ def chart_starter_bullpen(data: List[Dict]) -> Optional[go.Figure]:
     images = []
     for d in rows:
         url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
+        st.sidebar.write("TEAM:", d["team"], "LOGO:", url)
         if not url:
             continue
         images.append(dict(
