@@ -115,25 +115,19 @@ _DARK_BACKGROUND_TEAMS = {
     "COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF", "ARI", "SEA", "BAL"
 }
 
-def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
-    if not team:
-        return ""
+def get_team_logo_url(team_name: str, dark_bg: bool = False) -> str:
+    """
+    Returns the ESPN logo URL. 
+    Use dark_bg=True to get high-contrast versions for dark dashboards.
+    """
+    # Get the slug (defaults to 'mlb' logo if name not found)
+    abbrev = MLB_TEAM_ABBREV.get(team_name, "mlb")
     
-    team_clean = team.strip()
-    # 1. Resolve Abbreviation
-    abbrev = _FULL_TO_ABBREV.get(team_clean, team_clean.upper())
+    # Path selection: 
+    # '500-dark' provides logos optimized for dark backgrounds (e.g. adds white outlines)
+    folder = "500-dark" if dark_bg else "500"
     
-    # 2. Get the correct CDN slug
-    slug = MLB_TEAM_ABBREV.get(abbrev, abbrev.lower())
-
-    # 3. Path Selection
-    # If dark_bg is True, we attempt to use the '500-dark' variant for better contrast.
-    # This directory contains white-bordered or lightened versions of the logos.
-    if dark_bg:
-        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
-    
-    # Standard fallback
-    return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+    return f"https://espncdn.com{folder}/{abbrev}.png"
 
 def _svg_pill_url(logo_url: str, size: int = 44) -> str:
     """Wrap logo in a white circle for bar chart y-axis."""
