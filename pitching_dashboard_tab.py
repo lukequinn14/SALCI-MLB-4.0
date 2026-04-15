@@ -53,18 +53,18 @@ TEXT   = "#e2e8f0"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ABBREV_TO_ESPN: Dict[str, str] = {
-    "ARI": "arizona",
+    "ARI": "ari",
     "ATL": "atl",
     "BAL": "bal",
     "BOS": "bos",
-    "CHC": "chicago-cubs",
-    "CWS": "chicago-white-sox",
+    "CHC": "chi",   # Updated
+    "CWS": "chw",   # Updated
     "CIN": "cin",
     "CLE": "cle",
     "COL": "col",
     "DET": "det",
     "HOU": "hou",
-    "KC":  "kansas-city",
+    "KC":  "kc",    # Updated
     "LAA": "laa",
     "LAD": "lad",
     "MIA": "mia",
@@ -75,11 +75,11 @@ _ABBREV_TO_ESPN: Dict[str, str] = {
     "OAK": "oak",
     "PHI": "phi",
     "PIT": "pit",
-    "SD":  "san-diego",
-    "SF":  "san-francisco",
+    "SD":  "sd",    # Updated
+    "SF":  "sf",    # Updated
     "SEA": "sea",
     "STL": "stl",
-    "TB":  "tampa-bay",
+    "TB":  "tb",    # Updated
     "TEX": "tex",
     "TOR": "tor",
     "WSH": "wsh",
