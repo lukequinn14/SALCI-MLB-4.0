@@ -308,7 +308,7 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
 
 
 def _logo_html(team: str, size: int = 28) -> str:
-    url  = get_team_logo_url(team, dark_bg=False)
+    url  = get_team_logo_url(team, dark_bg=True)
     pill = size + 10
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
