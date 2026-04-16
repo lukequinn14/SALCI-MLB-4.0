@@ -211,10 +211,12 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     team    : Any form — full name, nickname, abbreviation, or API short name.
               Examples: "Arizona Diamondbacks", "D-backs", "ARI", "ari"
     dark_bg : When True, use ESPN's /500-dark/ path for teams whose primary
-              logo is hard to see on dark/navy chart backgrounds. Pass
-              dark_bg=True for all Plotly scatter/bar in-graph logos.
-              Pass dark_bg=False (default) for HTML card logos — the white
-              pill wrapper provides its own contrast.
+              logo is hard to see on dark/navy chart backgrounds.
+              
+              NOTE: For specific teams in _DARK_BACKGROUND_TEAMS, we ALWAYS use 
+              the /500-dark/ variant regardless of this flag, because their 
+              "dark" alternative is actually the preferred aesthetic logo (e.g. 
+              White NY for Yankees, Yellow SD for Padres).
 
     ESPN CDN paths used
     -------------------
@@ -233,16 +235,18 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     # Hardcoded override wins over all slug logic
     if abbrev in _URL_OVERRIDES:
         std_url, dark_url = _URL_OVERRIDES[abbrev]
-        return dark_url if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS else std_url
+        return dark_url if (dark_bg or abbrev in _DARK_BACKGROUND_TEAMS) else std_url
 
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    if dark_bg:
-        if abbrev in _DARK_BACKGROUND_TEAMS:
-            return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
-        else:
-            return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+    # If it's one of our special teams, always use the dark path
+    if abbrev in _DARK_BACKGROUND_TEAMS:
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
 
+    # Otherwise, respect the dark_bg flag for other teams if needed
+    # (Though currently _DARK_BACKGROUND_TEAMS is the only trigger for 500-dark)
+    if dark_bg:
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
@@ -267,9 +271,20 @@ def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -
         # Check that the URL contains one of our known valid slugs
         known_slugs = set(_ABBREV_TO_ESPN.values())  # e.g. {"ari", "atl", "chw", ...}
         url_lower = cached_url.lower()
+        
+        # If the team is one that REQUIRES a dark logo, check if the cached URL is already dark
+        abbrev = _resolve_abbrev(team)
+        if abbrev in _DARK_BACKGROUND_TEAMS:
+            if "/500-dark/" in url_lower:
+                return cached_url
+            else:
+                # Force re-resolve to get the dark version
+                return get_team_logo_url(team, dark_bg=dark_bg)
+
         if any(f"/{slug}." in url_lower for slug in known_slugs):
             return cached_url
-    return get_team_logo_url(team, dark_bg=False)
+
+    return get_team_logo_url(team, dark_bg=dark_bg)
 
 
 
