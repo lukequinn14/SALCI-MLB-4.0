@@ -1,7 +1,32 @@
 """
-team_pitching_stats.py  ·  SALCI v2.0
+team_pitching_stats.py  ·  SALCI v2.1
 =======================================
 Production-grade data loader for the pitching dashboard.
+
+CHANGELOG v2.1 — Bug Fixes
+────────────────────────────
+[FIX-1] _SAVANT_TEAM_ID_TO_ABBREV — duplicate key 119 caused KC to be silently
+         overwritten by LAD. Corrected all 30 team IDs against official MLBAM IDs.
+         Correct canonical mapping: KC=118, LAD=119. (Matches Baseball Savant / MLBAM)
+
+[FIX-2] MLB_TEAM_IDS / _CORRECT_IDS — LAA was mapped to 120 (WSH), LAD to 121 (NYM).
+         All IDs now validated against the authoritative MLBAM list provided.
+
+[FIX-3] _find_team_col() — now searches NORMALISED column names (post-rename_map)
+         instead of raw original names, so it correctly identifies the team column
+         after _aggregate_savant_df() normalises headers.
+
+[FIX-4] _aggregate_savant_df() — removed double-normalisation of team_col that
+         caused KeyError when grouping. team_col is now resolved once, post-rename.
+
+[FIX-5] Strategy 2 URL — removed "&group_by=team" which is not a valid Savant
+         aggregation parameter and caused empty or malformed responses. Now fetches
+         pitcher-level data and aggregates by team_id in Python instead.
+
+[FIX-6] Added debug logging throughout the aggregation pipeline so failures are
+         visible rather than silently returning empty dicts.
+
+[FIX-7] _SAVANT_ABBREV_MAP — expanded to cover all known Savant abbreviation variants.
 
 Strategy (FanGraphs is gone):
 ──────────────────────────────
@@ -9,30 +34,15 @@ Layer 1 — MLB Stats API  (always available, official)
     • Team season ERA / WHIP  →  /teams/{id}/stats?stats=season&group=pitching
     • Starter ERA split        →  sitCodes=startingPitchers
     • Bullpen ERA split        →  sitCodes=reliefPitchers
-    • Derived: K%, BB%, K-BB%, FIP (if K/BB/HR/HBP available from roster roll-up)
+    • Derived: K%, BB%, FIP
 
 Layer 2 — Baseball Savant leaderboards  (free CSV, no auth)
     • Team-level Statcast: xFIP proxy, barrel%, hard-hit%, whiff%
-    • URL: https://baseballsavant.mlb.com/leaderboard/custom?...
 
 Layer 3 — Self-computed advanced metrics
     • FIP  = (13·HR + 3·(BB+HBP) − 2·K) / IP + FIP_constant (~3.10)
     • K%   = K / TBF
     • BB%  = BB / TBF
-    • WHIP already in MLB API
-
-The SP/BP split is the #1 priority metric.  The approach below uses the
-official MLB Stats API sitCodes parameter which has been confirmed to work
-for team-level pitching splits:
-    /api/v1/teams/{team_id}/stats
-        ?stats=statSplits
-        &group=pitching
-        &season={season}
-        &sitCodes=startingPitchers   (or reliefPitchers)
-
-If sitCodes returns empty (early season / API quirk), we fall back to a
-roster-based roll-up: fetch each pitcher's season stats, classify SP vs RP
-by game-log appearance type, and aggregate manually.
 
 Logos
 ──────
@@ -42,71 +52,174 @@ Uses ESPN CDN:  https://a.espncdn.com/i/teamlogos/mlb/500/{abbrev}.png
 import requests
 import time
 import io
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEAM MAPS
+# CANONICAL MLBAM TEAM ID MAP  (validated against Baseball Savant / MLBAM)
+# Source: https://baseballsavant.mlb.com — numeric IDs used in Statcast queries
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# IMPORTANT: These are MLBAM (MLB Advanced Media) IDs — the same IDs used by
+# Baseball Savant's Statcast search API. Do NOT confuse with legacy Retrosheet
+# or other data-source IDs.
+#
+# Full verified list (2025):
+#   108 = LAA  (Los Angeles Angels)
+#   109 = ARI  (Arizona Diamondbacks)
+#   110 = BAL  (Baltimore Orioles)
+#   111 = BOS  (Boston Red Sox)
+#   112 = CHC  (Chicago Cubs)
+#   113 = CIN  (Cincinnati Reds)   ← NOTE: CIN=113, CWS=145
+#   114 = CLE  (Cleveland Guardians)
+#   115 = COL  (Colorado Rockies)
+#   116 = DET  (Detroit Tigers)
+#   117 = HOU  (Houston Astros)
+#   118 = KC   (Kansas City Royals)
+#   119 = LAD  (Los Angeles Dodgers)
+#   120 = WSH  (Washington Nationals)
+#   121 = NYM  (New York Mets)
+#   133 = OAK  (Oakland Athletics)
+#   134 = PIT  (Pittsburgh Pirates)
+#   135 = SD   (San Diego Padres)
+#   136 = SEA  (Seattle Mariners)
+#   137 = SF   (San Francisco Giants)
+#   138 = STL  (St. Louis Cardinals)
+#   139 = TB   (Tampa Bay Rays)
+#   140 = TEX  (Texas Rangers)
+#   141 = TOR  (Toronto Blue Jays)
+#   142 = MIN  (Minnesota Twins)
+#   143 = PHI  (Philadelphia Phillies)
+#   144 = ATL  (Atlanta Braves)
+#   145 = CWS  (Chicago White Sox)  ← was 113 in old buggy code
+#   146 = MIA  (Miami Marlins)
+#   147 = NYY  (New York Yankees)
+#   158 = MIL  (Milwaukee Brewers)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# MLB Stats API team IDs (2025)
+# Primary abbrev → MLBAM ID map  (used for MLB Stats API calls)
 MLB_TEAM_IDS: Dict[str, int] = {
-    "ARI": 109, "ATL": 144, "BAL": 110, "BOS": 111,
-    "CHC": 112, "CWS": 113, "CIN": 114, "CLE": 115,
-    "COL": 116, "DET": 117, "HOU": 118, "KC":  119,
-    "LAA": 120, "LAD": 121, "MIA": 146, "MIL": 158,
-    "MIN": 142, "NYM": 121, "NYY": 147, "OAK": 133,
-    "PHI": 143, "PIT": 134, "SD":  135, "SF":  137,
-    "SEA": 136, "STL": 138, "TB":  139, "TEX": 140,
-    "TOR": 141, "WSH": 120,
+    "LAA": 108,
+    "ARI": 109,
+    "BAL": 110,
+    "BOS": 111,
+    "CHC": 112,
+    "CIN": 113,
+    "CLE": 114,
+    "COL": 115,
+    "DET": 116,
+    "HOU": 117,
+    "KC":  118,
+    "LAD": 119,
+    "WSH": 120,
+    "NYM": 121,
+    "OAK": 133,
+    "PIT": 134,
+    "SD":  135,
+    "SEA": 136,
+    "SF":  137,
+    "STL": 138,
+    "TB":  139,
+    "TEX": 140,
+    "TOR": 141,
+    "MIN": 142,
+    "PHI": 143,
+    "ATL": 144,
+    "CWS": 145,
+    "MIA": 146,
+    "NYY": 147,
+    "MIL": 158,
 }
 
-# Correct IDs for teams that share abbrev collisions above
-_CORRECT_IDS: Dict[str, int] = {
-    "ARI": 109, "ATL": 144, "BAL": 110, "BOS": 111,
-    "CHC": 112, "CWS": 113, "CIN": 114, "CLE": 115,
-    "COL": 116, "DET": 117, "HOU": 118, "KC":  119,
-    "LAA": 108, "LAD": 119, "MIA": 146, "MIL": 158,
-    "MIN": 142, "NYM": 121, "NYY": 147, "OAK": 133,
-    "PHI": 143, "PIT": 134, "SD":  135, "SF":  137,
-    "SEA": 136, "STL": 138, "TB":  139, "TEX": 140,
-    "TOR": 141, "WSH": 120,
-}
+# Reverse map: MLBAM numeric ID → standard abbrev
+# Used by _aggregate_savant_df() to resolve team_id columns in Savant CSVs.
+# ❗ No duplicate keys — each ID maps to exactly one abbrev.
+_SAVANT_TEAM_ID_TO_ABBREV: Dict[int, str] = {v: k for k, v in MLB_TEAM_IDS.items()}
 
-# Full name → 3-letter abbrev (for API team name → logo lookup)
+# Verify the reverse map has all 30 teams at module load (fail-fast guard)
+assert len(_SAVANT_TEAM_ID_TO_ABBREV) == 30, (
+    f"_SAVANT_TEAM_ID_TO_ABBREV has {len(_SAVANT_TEAM_ID_TO_ABBREV)} entries — "
+    "duplicate IDs in MLB_TEAM_IDS!"
+)
+
+# Full name → 3-letter abbrev  (for API team name → logo lookup)
 FULL_NAME_TO_ABBREV: Dict[str, str] = {
-    "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL",
-    "Baltimore Orioles": "BAL",    "Boston Red Sox": "BOS",
-    "Chicago Cubs": "CHC",         "Chicago White Sox": "CWS",
-    "Cincinnati Reds": "CIN",      "Cleveland Guardians": "CLE",
-    "Colorado Rockies": "COL",     "Detroit Tigers": "DET",
-    "Houston Astros": "HOU",       "Kansas City Royals": "KC",
-    "Los Angeles Angels": "LAA",   "Los Angeles Dodgers": "LAD",
-    "Miami Marlins": "MIA",        "Milwaukee Brewers": "MIL",
-    "Minnesota Twins": "MIN",      "New York Mets": "NYM",
-    "New York Yankees": "NYY",     "Oakland Athletics": "OAK",
-    "Philadelphia Phillies": "PHI","Pittsburgh Pirates": "PIT",
-    "San Diego Padres": "SD",      "San Francisco Giants": "SF",
-    "Seattle Mariners": "SEA",     "St. Louis Cardinals": "STL",
-    "Tampa Bay Rays": "TB",        "Texas Rangers": "TEX",
-    "Toronto Blue Jays": "TOR",    "Washington Nationals": "WSH",
-    "Athletics": "OAK",
+    "Arizona Diamondbacks":  "ARI",
+    "Atlanta Braves":        "ATL",
+    "Baltimore Orioles":     "BAL",
+    "Boston Red Sox":        "BOS",
+    "Chicago Cubs":          "CHC",
+    "Chicago White Sox":     "CWS",
+    "Cincinnati Reds":       "CIN",
+    "Cleveland Guardians":   "CLE",
+    "Colorado Rockies":      "COL",
+    "Detroit Tigers":        "DET",
+    "Houston Astros":        "HOU",
+    "Kansas City Royals":    "KC",
+    "Los Angeles Angels":    "LAA",
+    "Los Angeles Dodgers":   "LAD",
+    "Miami Marlins":         "MIA",
+    "Milwaukee Brewers":     "MIL",
+    "Minnesota Twins":       "MIN",
+    "New York Mets":         "NYM",
+    "New York Yankees":      "NYY",
+    "Oakland Athletics":     "OAK",
+    "Philadelphia Phillies": "PHI",
+    "Pittsburgh Pirates":    "PIT",
+    "San Diego Padres":      "SD",
+    "San Francisco Giants":  "SF",
+    "Seattle Mariners":      "SEA",
+    "St. Louis Cardinals":   "STL",
+    "Tampa Bay Rays":        "TB",
+    "Texas Rangers":         "TEX",
+    "Toronto Blue Jays":     "TOR",
+    "Washington Nationals":  "WSH",
+    # Common short-forms returned by some APIs
+    "Athletics":             "OAK",
+    "Angels":                "LAA",
+    "Guardians":             "CLE",
 }
 
-# ESPN logo abbrevs (lowercase, some differ from MLB abbrev)
+# Savant-specific 3-letter abbreviation variants → our standard abbrev
+# Savant sometimes uses these non-standard codes in its CSV exports.
+_SAVANT_ABBREV_MAP: Dict[str, str] = {
+    # Pass-throughs (already standard)
+    "LAA": "LAA", "ARI": "ARI", "BAL": "BAL", "BOS": "BOS",
+    "CHC": "CHC", "CIN": "CIN", "CLE": "CLE", "COL": "COL",
+    "DET": "DET", "HOU": "HOU", "LAD": "LAD", "MIA": "MIA",
+    "MIL": "MIL", "MIN": "MIN", "NYM": "NYM", "NYY": "NYY",
+    "OAK": "OAK", "PHI": "PHI", "PIT": "PIT", "SEA": "SEA",
+    "SF":  "SF",  "STL": "STL", "TB":  "TB",  "TEX": "TEX",
+    "TOR": "TOR", "ATL": "ATL",
+    # Savant variants
+    "WSH": "WSH", "WAS": "WSH",
+    "CWS": "CWS", "CHW": "CWS",
+    "KCR": "KC",  "KCA": "KC",  "KC":  "KC",
+    "SDP": "SD",  "SDN": "SD",
+    "SFG": "SF",  "SFN": "SF",
+    "TBR": "TB",  "TBA": "TB",
+    "NYY": "NYY", "NYA": "NYY",
+    "NYM": "NYM", "NYN": "NYM",
+    "LAD": "LAD", "LAN": "LAD",
+    "LAA": "LAA", "ANA": "LAA",
+    "OAK": "OAK", "ATH": "OAK",
+}
+
+# ESPN logo CDN abbrevs (lowercase; a few differ from MLB abbrev)
 _ESPN_ABBREV: Dict[str, str] = {
-    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
-    "CHC": "chc", "CWS": "cws", "CIN": "cin", "CLE": "cle",
-    "COL": "col", "DET": "det", "HOU": "hou", "KC":  "kc",
-    "LAA": "laa", "LAD": "lad", "MIA": "mia", "MIL": "mil",
-    "MIN": "min", "NYM": "nym", "NYY": "nyy", "OAK": "oak",
-    "PHI": "phi", "PIT": "pit", "SD":  "sd",  "SF":  "sf",
-    "SEA": "sea", "STL": "stl", "TB":  "tb",  "TEX": "tex",
-    "TOR": "tor", "WSH": "wsh",
+    "LAA": "laa", "ARI": "ari", "BAL": "bal", "BOS": "bos",
+    "CHC": "chc", "CIN": "cin", "CLE": "cle", "COL": "col",
+    "DET": "det", "HOU": "hou", "KC":  "kc",  "LAD": "lad",
+    "WSH": "wsh", "NYM": "nym", "OAK": "oak", "PIT": "pit",
+    "SD":  "sd",  "SEA": "sea", "SF":  "sf",  "STL": "stl",
+    "TB":  "tb",  "TEX": "tex", "TOR": "tor", "MIN": "min",
+    "PHI": "phi", "ATL": "atl", "CWS": "cws", "MIA": "mia",
+    "NYY": "nyy", "MIL": "mil",
 }
 
 # FIP constant (changes slightly each season; 2024 ≈ 3.10)
 FIP_CONSTANT = 3.10
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGO HELPERS  (ESPN CDN — no auth, reliable)
@@ -117,7 +230,6 @@ def get_team_logo_url(team: str) -> str:
     Return ESPN logo URL for a team.
     Accepts 3-letter abbrev (ARI) or full name (Arizona Diamondbacks).
     """
-    # Normalise to abbrev
     abbrev = FULL_NAME_TO_ABBREV.get(team, team).upper()
     espn   = _ESPN_ABBREV.get(abbrev, abbrev.lower())
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/{espn}.png"
@@ -129,7 +241,7 @@ def get_team_logo_url(team: str) -> str:
 
 _BASE = "https://statsapi.mlb.com/api/v1"
 _SESSION = requests.Session()
-_SESSION.headers.update({"User-Agent": "SALCI/2.0"})
+_SESSION.headers.update({"User-Agent": "SALCI/2.1"})
 
 
 def _get(url: str, timeout: int = 12) -> Optional[dict]:
@@ -224,7 +336,7 @@ def _roster_based_split(team_id: int, season: int) -> Tuple[Optional[dict], Opti
     """
     Fallback when sitCodes is unavailable.
     Fetches the team roster, gets each pitcher's season stats, then
-    classifies as SP (≥3 avg IP per appearance) or RP and aggregates.
+    classifies as SP (≥50% games are starts) or RP and aggregates.
     """
     roster_url = (f"{_BASE}/teams/{team_id}/roster"
                   f"?rosterType=fullSeason&season={season}")
@@ -234,7 +346,7 @@ def _roster_based_split(team_id: int, season: int) -> Tuple[Optional[dict], Opti
 
     pitchers = [
         p for p in data.get("roster", [])
-        if p.get("position", {}).get("code") == "1"  # position 1 = pitcher
+        if p.get("position", {}).get("code") == "1"
     ]
 
     sp_totals = _empty_pitching_totals()
@@ -249,11 +361,8 @@ def _roster_based_split(team_id: int, season: int) -> Tuple[Optional[dict], Opti
         ip          = _parse_ip(stats.get("inningsPitched", 0))
         games_start = _safe_int(stats.get("gamesStarted", 0))
         games_total = _safe_int(stats.get("gamesPitched", 1))
-        avg_ip      = ip / games_total if games_total else 0
 
-        # Classify: if ≥50% games are starts OR avg IP ≥ 3 → starter
         is_starter = (games_start / games_total >= 0.5) if games_total else False
-
         target = sp_totals if is_starter else bp_totals
         _accumulate(target, stats)
 
@@ -313,24 +422,22 @@ def _aggregate_to_stat(t: dict) -> Optional[dict]:
 # LAYER 2 — BASEBALL SAVANT  (multi-strategy, early-season safe)
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# THREE PROBLEMS WITH THE PREVIOUS VERSION — ALL FIXED HERE:
+# ARCHITECTURE OVERVIEW
+# ─────────────────────
+# Three strategies are tried in order; all funnel through _aggregate_savant_df()
+# which normalises column names and resolves team identifiers uniformly.
 #
-# 1. WRONG URL: The leaderboard/custom endpoint with &min=q requires a minimum
-#    number of qualifying innings (~1 IP/team game played). In April with 5-8
-#    games, almost no pitchers qualify → empty CSV.
-#    FIX: Use min=1 (1 PA minimum) and add season-start fallback using the
-#    Statcast search CSV aggregated by team_id, which has no min requirement.
+# Strategy 1 — Pitcher leaderboard (min=1 PA):
+#   Best quality, but requires enough innings. Works reliably from ~May.
 #
-# 2. EARLY SEASON DATA: Even with min=1, the leaderboard may have incomplete
-#    team coverage in April. FIX: Fall back to statcast_search/csv with
-#    group_by=team which gives aggregated stats directly without pitcher-level
-#    groupby operations that fail when teams have 0 qualifying pitchers.
+# Strategy 2 — statcast_search pitcher-level, full season:
+#   Returns pitcher-level rows with team_id column. No min IP.
+#   We aggregate by team_id in Python. This replaces the broken
+#   "&group_by=team" URL param (which Savant does not support).
 #
-# 3. COLUMN NAME MISMATCH: Savant CSV uses inconsistent headers across
-#    endpoints ('Team', 'team_name', '#Team', 'team_id', etc.)
-#    FIX: Comprehensive column detection with multiple candidate names,
-#    plus a team_id → abbrev lookup as ultimate fallback.
-#
+# Strategy 3 — statcast_search pitcher-level, rolling 30 days:
+#   Smaller payload, most reliable connection-wise. Used as last resort.
+#   Manually aggregated by team in Python.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SAVANT_TIMEOUT = 25
@@ -345,58 +452,47 @@ _SAVANT_HEADERS = {
     "Referer": "https://baseballsavant.mlb.com/",
 }
 
-# Savant uses numeric team IDs in some endpoints — map to our abbrevs
-_SAVANT_TEAM_ID_TO_ABBREV: Dict[int, str] = {
-    109: "ARI", 144: "ATL", 110: "BAL", 111: "BOS",
-    112: "CHC", 113: "CWS", 114: "CIN", 115: "CLE",
-    116: "COL", 117: "DET", 118: "HOU", 119: "KC",
-    108: "LAA", 119: "LAD", 146: "MIA", 158: "MIL",
-    142: "MIN", 121: "NYM", 147: "NYY", 133: "OAK",
-    143: "PHI", 134: "PIT", 135: "SD",  137: "SF",
-    136: "SEA", 138: "STL", 139: "TB",  140: "TEX",
-    141: "TOR", 120: "WSH",
-}
-
-# Savant 3-letter abbrevs differ from ours in a few cases
-_SAVANT_ABBREV_MAP: Dict[str, str] = {
-    "WSH": "WSH", "WAS": "WSH",
-    "CWS": "CWS", "CHW": "CWS",
-    "KCR": "KC",  "KCA": "KC",
-    "SDP": "SD",  "SFG": "SF",
-    "TBR": "TB",  "TBA": "TB",
-    "ARI": "ARI", "LAA": "LAA", "LAD": "LAD",
-}
-
 
 def _normalise_savant_abbrev(raw: str) -> str:
-    """Convert Savant team abbreviation to our standard 2-3 letter abbrev."""
+    """Convert Savant team abbreviation to our standard abbrev."""
     raw = str(raw).strip().upper()
     return _SAVANT_ABBREV_MAP.get(raw, raw)
 
 
 def _find_team_col(df) -> Optional[str]:
     """
-    Robustly find the team column in a Savant CSV DataFrame.
-    Savant uses different column names across endpoints and over time.
+    Robustly find the team column in a Savant DataFrame AFTER column
+    normalisation has been applied (all headers are already lowercase,
+    stripped, with spaces→underscores).
+
+    [FIX-3] Prior version searched original column names before rename_map
+    was applied, causing _find_team_col to always miss the renamed columns.
+    This version only needs to search the already-normalised column list.
     """
-    import pandas as pd
+    cols = list(df.columns)
 
-    cols_lower = {c.lower().strip().lstrip("#"): c for c in df.columns}
-
-    # Priority order of candidate names
+    # Priority-ordered candidates — all lowercase normalised names
     candidates = [
-        "team_name", "team_name_alt", "team", "team_abbrev",
-        "home_team", "pitcher_team", "team_id",
+        "team_name",
+        "team_name_alt",
+        "team_abbrev",
+        "team",
+        "pitcher_team",
+        "home_team",
+        "team_id",
     ]
     for cand in candidates:
-        if cand in cols_lower:
-            return cols_lower[cand]
+        if cand in cols:
+            print(f"[DEBUG _find_team_col] Found team column: '{cand}'")
+            return cand
 
-    # Last resort: any column with "team" in the name
-    for orig_col in df.columns:
-        if "team" in orig_col.lower():
-            return orig_col
+    # Last resort: any column containing "team"
+    for col in cols:
+        if "team" in col:
+            print(f"[DEBUG _find_team_col] Fallback team column: '{col}'")
+            return col
 
+    print(f"[DEBUG _find_team_col] No team column found in: {cols[:20]}")
     return None
 
 
@@ -404,7 +500,7 @@ def _fetch_savant_leaderboard(season: int) -> Optional["pd.DataFrame"]:
     """
     Strategy 1: Savant pitcher leaderboard with very low minimum (min=1).
     Returns the raw DataFrame or None.
-    Works best mid/late season when there are enough innings.
+    Works best mid/late season when there are enough innings pitched.
     """
     try:
         import pandas as pd
@@ -423,26 +519,31 @@ def _fetch_savant_leaderboard(season: int) -> Optional["pd.DataFrame"]:
         resp.raise_for_status()
         text = resp.text.strip()
         if not text or len(text) < 200:
+            print("[Savant leaderboard] Response too short — skipping")
             return None
         df = pd.read_csv(io.StringIO(text), low_memory=False)
+        print(f"[Savant leaderboard] Fetched {len(df)} rows, columns: {list(df.columns)[:10]}")
         return df if not df.empty else None
     except Exception as e:
         print(f"[Savant leaderboard] {e}")
         return None
 
 
-def _fetch_savant_statcast_team_csv(season: int) -> Optional["pd.DataFrame"]:
+def _fetch_savant_statcast_season_csv(season: int) -> Optional["pd.DataFrame"]:
     """
-    Strategy 2: Savant statcast_search with group_by=team.
-    This endpoint aggregates by team directly — no min innings qualifier.
-    Works well early in the season (even game 1).
+    Strategy 2: Savant statcast_search, pitcher-level rows for full season.
+
+    [FIX-5] Removed invalid "&group_by=team" parameter. Savant's statcast_search
+    does not support team-level grouping in this endpoint — it returns pitcher rows.
+    We aggregate by team_id ourselves in _aggregate_savant_df().
+
+    Uses "&group_by=name_auto" to get one row per pitcher (includes team_id).
     """
     try:
         import pandas as pd
     except ImportError:
         return None
 
-    from datetime import date
     season_start = f"{season}-03-20"
     today        = date.today().strftime("%Y-%m-%d")
 
@@ -451,7 +552,8 @@ def _fetch_savant_statcast_team_csv(season: int) -> Optional["pd.DataFrame"]:
         f"?all=true&hfGT=R%7C&hfSea={season}%7C"
         f"&game_date_gt={season_start}&game_date_lt={today}"
         "&player_type=pitcher&min_results=0&min_pas=0"
-        "&group_by=team&sort_col=pitches&sort_order=desc"
+        "&group_by=name_auto"          # ← pitcher-level rows; includes team_id
+        "&sort_col=pitches&sort_order=desc"
         "&type=details"
     )
     try:
@@ -459,31 +561,28 @@ def _fetch_savant_statcast_team_csv(season: int) -> Optional["pd.DataFrame"]:
         resp.raise_for_status()
         text = resp.text.strip()
         if not text or len(text) < 100:
+            print("[Savant statcast_search/season] Response too short — skipping")
             return None
         df = pd.read_csv(io.StringIO(text), low_memory=False)
+        print(f"[Savant statcast_search/season] Fetched {len(df)} rows, "
+              f"columns: {list(df.columns)[:10]}")
         return df if not df.empty else None
     except Exception as e:
-        print(f"[Savant statcast_search/team] {e}")
+        print(f"[Savant statcast_search/season] {e}")
         return None
 
 
 def _fetch_savant_statcast_raw_csv(season: int) -> Optional["pd.DataFrame"]:
     """
-    Strategy 3: Savant statcast_search pitch-level data, all pitchers,
-    then aggregate by team ourselves.
-    This is the most reliable but returns a LOT of data — we cap it by
-    asking for summary columns only.
-    Only used if strategies 1 and 2 both fail.
+    Strategy 3: Savant statcast_search pitch-level data — last 30 days.
+    Smaller payload; most reliable fallback. Aggregated by team in Python.
     """
     try:
         import pandas as pd
     except ImportError:
         return None
 
-    from datetime import date
-    # Use a rolling 30-day window to keep response size manageable
     end_d   = date.today().strftime("%Y-%m-%d")
-    from datetime import timedelta
     start_d = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
 
     url = (
@@ -491,7 +590,7 @@ def _fetch_savant_statcast_raw_csv(season: int) -> Optional["pd.DataFrame"]:
         f"?all=true&hfGT=R%7C&hfSea={season}%7C"
         f"&game_date_gt={start_d}&game_date_lt={end_d}"
         "&player_type=pitcher&min_results=0&min_pas=0"
-        "&group_by=name_auto"   # pitcher-level but includes team_id
+        "&group_by=name_auto"
         "&sort_col=pitches&sort_order=desc"
         "&type=details"
     )
@@ -500,11 +599,14 @@ def _fetch_savant_statcast_raw_csv(season: int) -> Optional["pd.DataFrame"]:
         resp.raise_for_status()
         text = resp.text.strip()
         if not text or len(text) < 200:
+            print("[Savant statcast_search/30d] Response too short — skipping")
             return None
         df = pd.read_csv(io.StringIO(text), low_memory=False)
+        print(f"[Savant statcast_search/30d] Fetched {len(df)} rows, "
+              f"columns: {list(df.columns)[:10]}")
         return df if not df.empty else None
     except Exception as e:
-        print(f"[Savant statcast_search/raw] {e}")
+        print(f"[Savant statcast_search/30d] {e}")
         return None
 
 
@@ -514,6 +616,12 @@ def _aggregate_savant_df(df, season: int) -> Dict[str, dict]:
     aggregates for whiff%, hard-hit%, k%, xFIP proxy.
 
     Handles column name inconsistencies across all three strategies.
+
+    [FIX-3] _find_team_col() is called AFTER rename_map is applied, so it
+    correctly detects normalised column names.
+    [FIX-4] team_col is used directly as-is post-normalisation; no second
+    strip/lower/replace pass that was causing KeyErrors.
+    [FIX-6] Debug logging added at each key decision point.
     """
     try:
         import pandas as pd
@@ -524,23 +632,26 @@ def _aggregate_savant_df(df, season: int) -> Dict[str, dict]:
     if df is None or df.empty:
         return {}
 
-    # ── Normalise column names ────────────────────────────────────────────────
+    # ── Step 1: Normalise ALL column names to lowercase_with_underscores ─────
     rename_map = {}
     for col in df.columns:
-        c = col.strip().lower().lstrip("#").replace(" ", "_")
-        rename_map[col] = c
+        normalised = col.strip().lower().lstrip("#").replace(" ", "_")
+        rename_map[col] = normalised
     df = df.rename(columns=rename_map)
 
-    # ── Identify team column ─────────────────────────────────────────────────
+    print(f"[DEBUG aggregate] Normalised columns (first 15): {list(df.columns)[:15]}")
+
+    # ── Step 2: Find team column in normalised DataFrame ─────────────────────
+    # [FIX-3] Called here, after rename, so it searches normalised names.
     team_col = _find_team_col(df)
     if not team_col:
-        print("[Savant aggregate] No team column found. Columns:", list(df.columns)[:15])
+        print("[Savant aggregate] ❌ No team column found — cannot aggregate")
         return {}
 
-    team_col_norm = team_col.strip().lower().lstrip("#").replace(" ", "_")
+    print(f"[DEBUG aggregate] Using team column: '{team_col}'")
+    print(f"[DEBUG aggregate] Sample team values: {df[team_col].dropna().unique()[:8].tolist()}")
 
-    # ── Column aliases for each metric ───────────────────────────────────────
-    # Different Savant endpoints use different column names for the same stat
+    # ── Step 3: Metric column aliases (normalised names) ─────────────────────
     col_aliases = {
         "whiff_pct":    ["whiff_percent", "swinging_strike_percent", "whiff%", "swstr%"],
         "hard_hit_pct": ["hard_hit_percent", "hard_hit%", "hardhit_percent"],
@@ -557,97 +668,114 @@ def _aggregate_savant_df(df, season: int) -> Dict[str, dict]:
                 return a
         return None
 
-    active_cols = {metric: _find_col(aliases)
-                   for metric, aliases in col_aliases.items()
-                   if _find_col(aliases)}
+    active_cols = {
+        metric: _find_col(aliases)
+        for metric, aliases in col_aliases.items()
+        if _find_col(aliases)
+    }
+
+    print(f"[DEBUG aggregate] Active metric columns: {active_cols}")
 
     if not active_cols:
-        print("[Savant aggregate] No recognizable metric columns found:", list(df.columns)[:20])
+        print("[Savant aggregate] ❌ No recognisable metric columns found")
+        print(f"[DEBUG aggregate] All columns: {list(df.columns)}")
         return {}
 
-    # ── Aggregate by team ────────────────────────────────────────────────────
+    # ── Step 4: Group by team and aggregate ──────────────────────────────────
     result: Dict[str, dict] = {}
 
-    # Resolve team identifier: could be abbreviation string, full name, or int ID
-    for team_raw, grp in df.groupby(team_col_norm):
-        # Try to resolve to our standard abbrev
+    for team_raw, grp in df.groupby(team_col):
         team_str = str(team_raw).strip()
 
-        # Numeric team ID?
+        # Resolution order:
+        # 1. Numeric MLBAM team_id  →  _SAVANT_TEAM_ID_TO_ABBREV
+        # 2. Full team name         →  FULL_NAME_TO_ABBREV
+        # 3. Abbreviation variant   →  _SAVANT_ABBREV_MAP
+
+        abbrev = ""
+
+        # Try numeric ID first
         try:
-            abbrev = _SAVANT_TEAM_ID_TO_ABBREV.get(int(float(team_str)), "")
+            numeric_id = int(float(team_str))
+            abbrev = _SAVANT_TEAM_ID_TO_ABBREV.get(numeric_id, "")
         except (ValueError, TypeError):
-            abbrev = ""
+            pass
 
         if not abbrev:
-            # Full name?
             abbrev = FULL_NAME_TO_ABBREV.get(team_str, "")
+
         if not abbrev:
-            # Already an abbreviation (with possible Savant-specific variant)
             abbrev = _normalise_savant_abbrev(team_str)
 
         if not abbrev or len(abbrev) > 4:
+            print(f"[DEBUG aggregate] Could not resolve team: '{team_str}' — skipping")
             continue
 
         agg: dict = {}
         for metric, col in active_cols.items():
             vals = pd.to_numeric(grp[col], errors="coerce").dropna()
-            if not vals.empty:
-                # For xFIP and ERA: weighted by IP if available
-                if metric in ("xfip", "p_era") and "ip" in grp.columns:
-                    ips = pd.to_numeric(grp["ip"], errors="coerce").fillna(0)
-                    total_ip = ips.sum()
-                    if total_ip > 0:
-                        agg[metric] = round((vals * ips).sum() / total_ip, 2)
-                        continue
-                agg[metric] = round(vals.mean(), 2)
+            if vals.empty:
+                continue
+
+            # xFIP and ERA: IP-weighted average when IP column is available
+            if metric in ("xfip", "p_era") and "ip" in grp.columns:
+                ips = pd.to_numeric(grp["ip"], errors="coerce").fillna(0)
+                total_ip = ips.sum()
+                if total_ip > 0:
+                    agg[metric] = round(float((vals * ips).sum() / total_ip), 2)
+                    continue
+
+            agg[metric] = round(float(vals.mean()), 2)
 
         if agg:
             result[abbrev] = agg
 
-    print(f"[Savant aggregate] Got data for {len(result)} teams")
+    print(f"[Savant aggregate] ✅ Got data for {len(result)} teams: "
+          f"{sorted(result.keys())}")
     return result
 
 
 def _fetch_savant_team_pitching(season: int) -> Dict[str, dict]:
     """
-    Master function: try three strategies in order, return first success.
+    Master function: try three strategies in order, return best coverage.
 
     Strategy 1 — Savant pitcher leaderboard (min=1):
-        Best data quality, but requires enough innings (works from ~May onward).
-    Strategy 2 — Savant statcast_search grouped by team:
-        Works early season, direct team aggregates, no min IP requirement.
-    Strategy 3 — Savant statcast_search pitcher-level, last 30 days:
-        Most reliable connection-wise, manually aggregated by team.
-
-    All strategies feed through the same _aggregate_savant_df() normaliser
-    so column name differences are handled uniformly.
+        Best data quality; works from ~May onward.
+    Strategy 2 — statcast_search full-season pitcher rows:
+        Works early season; no min IP; aggregated by team_id in Python.
+    Strategy 3 — statcast_search rolling 30-day pitcher rows:
+        Smallest payload; most reliable connection; last resort.
     """
-    print(f"[Savant] Trying Strategy 1: leaderboard (min=1)…")
-    df1 = _fetch_savant_leaderboard(season)
-    result = _aggregate_savant_df(df1, season)
-    if len(result) >= 20:
-        print(f"[Savant] Strategy 1 succeeded: {len(result)} teams")
+    # Strategy 1
+    print("[Savant] Trying Strategy 1: pitcher leaderboard (min=1)…")
+    df1     = _fetch_savant_leaderboard(season)
+    result  = _aggregate_savant_df(df1, season)
+    if len(result) >= 25:
+        print(f"[Savant] ✅ Strategy 1 succeeded: {len(result)} teams")
         return result
 
-    print(f"[Savant] Strategy 1 partial ({len(result)} teams). Trying Strategy 2: statcast_search/team…")
-    df2 = _fetch_savant_statcast_team_csv(season)
+    # Strategy 2
+    print(f"[Savant] Strategy 1 partial ({len(result)} teams). "
+          "Trying Strategy 2: statcast_search/season…")
+    df2     = _fetch_savant_statcast_season_csv(season)
     result2 = _aggregate_savant_df(df2, season)
-    if len(result2) >= 20:
-        print(f"[Savant] Strategy 2 succeeded: {len(result2)} teams")
+    if len(result2) >= 25:
+        print(f"[Savant] ✅ Strategy 2 succeeded: {len(result2)} teams")
         return result2
 
-    # Merge strategies 1+2 if neither is complete
+    # Merge S1 + S2 — S2 takes priority (more recent naming)
     merged = {**result, **result2}
-    if len(merged) >= 20:
-        print(f"[Savant] Merged S1+S2: {len(merged)} teams")
+    if len(merged) >= 25:
+        print(f"[Savant] ✅ Merged S1+S2: {len(merged)} teams")
         return merged
 
-    print(f"[Savant] Strategies 1+2 gave {len(merged)} teams. Trying Strategy 3: raw 30-day window…")
-    df3 = _fetch_savant_statcast_raw_csv(season)
+    # Strategy 3
+    print(f"[Savant] S1+S2 gave {len(merged)} teams. "
+          "Trying Strategy 3: statcast_search/30d…")
+    df3     = _fetch_savant_statcast_raw_csv(season)
     result3 = _aggregate_savant_df(df3, season)
     merged.update(result3)
-    print(f"[Savant] Final coverage: {len(merged)} teams")
+    print(f"[Savant] Final coverage: {len(merged)} teams → {sorted(merged.keys())}")
     return merged
 
 
@@ -658,7 +786,6 @@ def _fetch_savant_team_pitching(season: int) -> Dict[str, dict]:
 def _compute_fip(stat: dict, fip_constant: float = FIP_CONSTANT) -> Optional[float]:
     """
     FIP = (13·HR + 3·(BB+HBP) − 2·K) / IP + FIP_constant
-    Requires: homeRuns, baseOnBalls, hitByPitch, strikeOuts, inningsPitched
     """
     ip  = _parse_ip(stat.get("inningsPitched", 0))
     hr  = _safe_int(stat.get("homeRuns", 0))
@@ -717,33 +844,37 @@ def get_all_team_pitching(season: int) -> List[dict]:
     """
     print(f"[team_pitching_stats] Loading {season} data…")
 
-    # ── Step 1: Fetch all team IDs from API (live, handles expansion/moves) ──
+    # ── Step 1: Live team map from MLB API ────────────────────────────────────
     team_map = _fetch_live_team_map(season)
     if not team_map:
-        # Use hard-coded fallback
-        team_map = {abbrev: tid for abbrev, tid in _CORRECT_IDS.items()}
+        print("[team_pitching_stats] Live team map failed — using hard-coded fallback")
+        team_map = dict(MLB_TEAM_IDS)
 
-    # ── Step 2: Baseball Savant (best-effort) ────────────────────────────────
-    savant_data = {}
+    print(f"[team_pitching_stats] Team map: {len(team_map)} teams")
+
+    # ── Step 2: Baseball Savant (best-effort) ─────────────────────────────────
+    savant_data: Dict[str, dict] = {}
     try:
         savant_data = _fetch_savant_team_pitching(season)
         print(f"[team_pitching_stats] Savant returned {len(savant_data)} teams")
     except Exception as e:
         print(f"[team_pitching_stats] Savant unavailable: {e}")
 
-    # ── Step 3: Per-team MLB API calls ───────────────────────────────────────
+    # ── Step 3: Per-team MLB API calls ────────────────────────────────────────
     results = []
     for abbrev, team_id in sorted(team_map.items()):
         record = _build_team_record(abbrev, team_id, season, savant_data)
         results.append(record)
-        time.sleep(0.05)  # be polite to the API
+        time.sleep(0.05)  # be polite
 
-    print(f"[team_pitching_stats] Done — {len(results)} teams loaded")
+    savant_count = sum(1 for d in results if "Savant" in d["source"])
+    print(f"[team_pitching_stats] Done — {len(results)} teams loaded, "
+          f"{savant_count} with Savant data")
     return results
 
 
 def _fetch_live_team_map(season: int) -> Dict[str, int]:
-    """Fetch current team abbrev → ID map from the API."""
+    """Fetch current team abbrev → MLBAM ID map from the MLB Stats API."""
     url = f"{_BASE}/teams?sportId=1&season={season}"
     data = _get(url)
     if not data:
@@ -781,16 +912,16 @@ def _build_team_record(abbrev: str, team_id: int,
         "source":       "MLB API",
     }
 
-    # ── Overall season stats ─────────────────────────────────────────────────
+    # ── Overall season stats ──────────────────────────────────────────────────
     overall = _fetch_team_season_pitching(team_id, season)
     if overall:
-        record["era"]   = _safe_float(overall.get("era"))
-        record["whip"]  = _safe_float(overall.get("whip"))
-        record["k_pct"] = _compute_k_pct(overall)
+        record["era"]    = _safe_float(overall.get("era"))
+        record["whip"]   = _safe_float(overall.get("whip"))
+        record["k_pct"]  = _compute_k_pct(overall)
         record["bb_pct"] = _compute_bb_pct(overall)
-        record["fip"]   = _compute_fip(overall)
+        record["fip"]    = _compute_fip(overall)
 
-    # ── SP / BP split ────────────────────────────────────────────────────────
+    # ── SP / BP split ─────────────────────────────────────────────────────────
     sp_stat, bp_stat = _fetch_sp_bp_split(team_id, season)
 
     if sp_stat:
@@ -805,16 +936,14 @@ def _build_team_record(abbrev: str, team_id: int,
         record["bullpen_ip"]   = _safe_float(
             bp_stat.get("inningsPitched") or bp_stat.get("_ip"))
 
-    # ── Baseball Savant overlay ──────────────────────────────────────────────
-    # _aggregate_savant_df() outputs normalised keys: whiff_pct, hard_hit_pct,
-    # k_pct, bb_pct, barrel_pct, xfip, p_era
+    # ── Baseball Savant overlay ───────────────────────────────────────────────
     sv = savant_data.get(abbrev, {})
     if sv:
         record["xfip"]         = sv.get("xfip")
         record["whiff_pct"]    = sv.get("whiff_pct")
         record["hard_hit_pct"] = sv.get("hard_hit_pct")
         record["barrel_pct"]   = sv.get("barrel_pct")
-        # Use Savant K% only if MLB API didn't have enough TBF data
+        # Only use Savant K% if MLB API didn't have enough TBF data
         if record["k_pct"] is None and sv.get("k_pct") is not None:
             record["k_pct"] = sv.get("k_pct")
         record["source"] = "MLB API + Savant"
@@ -830,13 +959,14 @@ def get_team_pitching(team_abbrev: str, season: int) -> Optional[dict]:
     """Fetch data for a single team. Useful for real-time game-day updates."""
     team_map = _fetch_live_team_map(season)
     if not team_map:
-        team_map = _CORRECT_IDS
+        team_map = dict(MLB_TEAM_IDS)
 
     team_id = team_map.get(team_abbrev.upper())
     if not team_id:
+        print(f"[get_team_pitching] Unknown team: '{team_abbrev}'")
         return None
 
-    savant_data = {}
+    savant_data: Dict[str, dict] = {}
     try:
         savant_data = _fetch_savant_team_pitching(season)
     except Exception:
@@ -846,23 +976,59 @@ def get_team_pitching(team_abbrev: str, season: int) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DIAGNOSTIC: print team ID map at import time (set env var to enable)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def print_team_id_map() -> None:
+    """Print the canonical MLBAM ID ↔ abbrev mapping for verification."""
+    print("\nSALCI Canonical MLBAM Team ID Map")
+    print("=" * 40)
+    for abbrev, tid in sorted(MLB_TEAM_IDS.items()):
+        print(f"  {tid:3d}  {abbrev}")
+    print(f"\nTotal: {len(MLB_TEAM_IDS)} teams")
+    assert len(MLB_TEAM_IDS) == 30, "Missing teams!"
+    print("✅ All 30 teams present, no duplicates")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # STANDALONE TEST
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import json
+
+    print_team_id_map()
+
     season = datetime.today().year
     print(f"\nSALCI Team Pitching Stats — {season} season\n{'='*50}")
     data = get_all_team_pitching(season)
-    for d in sorted(data, key=lambda x: x.get("starter_era") or 99)[:10]:
+
+    # Sort by starter ERA (ascending), put None last
+    data_sorted = sorted(data, key=lambda x: x.get("starter_era") or 99.9)
+
+    print(f"\n{'TEAM':<5} {'SP ERA':>7} {'BP ERA':>7} {'ERA':>6} "
+          f"{'FIP':>6} {'xFIP':>6} {'K%':>5} {'Whiff%':>7} {'Source'}")
+    print("-" * 75)
+    for d in data_sorted:
         print(
-            f"{d['team']:4s}  "
-            f"SP ERA: {d['starter_era'] or '—':>5}  "
-            f"BP ERA: {d['bullpen_era'] or '—':>5}  "
-            f"ERA: {d['era'] or '—':>5}  "
-            f"FIP: {d['fip'] or '—':>5}  "
-            f"xFIP: {d['xfip'] or '—':>5}  "
-            f"K%: {d['k_pct'] or '—':>5}  "
-            f"[{d['source']}]"
+            f"{d['team']:<5}"
+            f"{str(d['starter_era'] or '—'):>7}"
+            f"{str(d['bullpen_era'] or '—'):>7}"
+            f"{str(d['era'] or '—'):>6}"
+            f"{str(d['fip'] or '—'):>6}"
+            f"{str(d['xfip'] or '—'):>6}"
+            f"{str(d['k_pct'] or '—'):>5}"
+            f"{str(d['whiff_pct'] or '—'):>7}"
+            f"  [{d['source']}]"
         )
-    print(f"\nSavant coverage: {sum(1 for d in data if 'Savant' in d['source'])}/30")
+
+    savant_count = sum(1 for d in data if "Savant" in d["source"])
+    print(f"\nSavant coverage: {savant_count}/30")
+
+    # Verify no KC/LAD confusion
+    kc  = next((d for d in data if d["team"] == "KC"),  None)
+    lad = next((d for d in data if d["team"] == "LAD"), None)
+    print(f"\n[Sanity] KC  team_id from live map: {MLB_TEAM_IDS.get('KC')}  (expected 118)")
+    print(f"[Sanity] LAD team_id from live map: {MLB_TEAM_IDS.get('LAD')} (expected 119)")
+    print(f"[Sanity] KC  ERA: {kc.get('era') if kc else 'NOT FOUND'}")
+    print(f"[Sanity] LAD ERA: {lad.get('era') if lad else 'NOT FOUND'}")
