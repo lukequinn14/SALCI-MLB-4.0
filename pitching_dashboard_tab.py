@@ -204,8 +204,28 @@ def _resolve_abbrev(team: str) -> str:
 
 def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     """
-    dark_bg=True  → use /500-dark/ for teams that have dark variants
-    dark_bg=False → ALWAYS use scoreboard logos (white-pill safe)
+    Return the ESPN CDN logo URL for any MLB team input.
+
+    Parameters
+    ----------
+    team    : Any form — full name, nickname, abbreviation, or API short name.
+              Examples: "Arizona Diamondbacks", "D-backs", "ARI", "ari"
+    dark_bg : When True, use ESPN's /500-dark/ path for teams whose primary
+              logo is hard to see on dark/navy chart backgrounds.
+              
+              NOTE: For specific teams in _DARK_BACKGROUND_TEAMS, we ALWAYS use 
+              the /500-dark/ variant regardless of this flag, because their 
+              "dark" alternative is actually the preferred aesthetic logo (e.g. 
+              White NY for Yankees, Yellow SD for Padres).
+
+    ESPN CDN paths used
+    -------------------
+    Standard   : https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png
+    Dark alt   : https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png
+    
+
+    Both paths work in-browser (Streamlit). Direct server-side fetch returns 403
+    (ESPN hotlink protection) — this is expected and harmless.
     """
     if not team:
         return ""
@@ -215,28 +235,56 @@ def get_team_logo_url(team: str, dark_bg: bool = False) -> str:
     # Hardcoded override wins over all slug logic
     if abbrev in _URL_OVERRIDES:
         std_url, dark_url = _URL_OVERRIDES[abbrev]
-        return dark_url if dark_bg else std_url
+        return dark_url if (dark_bg or abbrev in _DARK_BACKGROUND_TEAMS) else std_url
 
     slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
 
-    # Only use dark logos when dark_bg=True AND team has a dark variant
-    if dark_bg and abbrev in _DARK_BACKGROUND_TEAMS:
+    # If it's one of our special teams, always use the dark path
+    if abbrev in _DARK_BACKGROUND_TEAMS:
         return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
 
-    # Otherwise always use scoreboard
+    # Otherwise, respect the dark_bg flag for other teams if needed
+    # (Though currently _DARK_BACKGROUND_TEAMS is the only trigger for 500-dark)
+    if dark_bg:
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+
     return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
 
 
-
 def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -> str:
-    ESPN_HOST = "espncdn.com/i/teamlogos/mlb"
+    """
+    Safe wrapper for use inside chart loops where data rows may carry a
+    pre-cached logo_url from team_pitching_stats.py.
 
-    # Accept any ESPN URL (scoreboard or dark)
+    Validation rules for accepting a cached URL:
+    1. Must contain the ESPN CDN hostname
+    2. Must contain a known-good slug from _ABBREV_TO_ESPN values
+       (rejects URLs with unresolved slugs like "diamondbacks", "d-backs", etc.)
+
+    If validation fails, the URL is re-derived fresh from the team name.
+
+    Usage:
+        url = resolve_logo_url(d["team"], d.get("logo_url"), dark_bg=True)
+    """
+    ESPN_HOST = "espncdn.com/i/teamlogos/mlb"
     if cached_url and ESPN_HOST in cached_url:
-        return cached_url
+        # Check that the URL contains one of our known valid slugs
+        known_slugs = set(_ABBREV_TO_ESPN.values())  # e.g. {"ari", "atl", "chw", ...}
+        url_lower = cached_url.lower()
+        
+        # If the team is one that REQUIRES a dark logo, check if the cached URL is already dark
+        abbrev = _resolve_abbrev(team)
+        if abbrev in _DARK_BACKGROUND_TEAMS:
+            if "/500-dark/" in url_lower:
+                return cached_url
+            else:
+                # Force re-resolve to get the dark version
+                return get_team_logo_url(team, dark_bg=dark_bg)
+
+        if any(f"/{slug}." in url_lower for slug in known_slugs):
+            return cached_url
 
     return get_team_logo_url(team, dark_bg=dark_bg)
-
 
 
 
