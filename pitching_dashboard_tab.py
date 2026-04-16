@@ -269,7 +269,7 @@ def resolve_logo_url(team: str, cached_url: str | None, dark_bg: bool = False) -
         url_lower = cached_url.lower()
         if any(f"/{slug}." in url_lower for slug in known_slugs):
             return cached_url
-    return get_team_logo_url(team, dark_bg=(team in _DARK_BACKGROUND_TEAMS))
+    return get_team_logo_url(team, dark_bg=False)
 
 
 
@@ -308,7 +308,7 @@ def _svg_dark_ring_url(logo_url: str, size: int = 44) -> str:
 
 
 def _logo_html(team: str, size: int = 28) -> str:
-    url  = get_team_logo_url(team, dark_bg=(team in _DARK_BACKGROUND_TEAMS))
+    url  = get_team_logo_url(team, dark_bg=False)
     pill = size + 10
     return (
         f'<span style="display:inline-flex;align-items:center;justify-content:center;'
