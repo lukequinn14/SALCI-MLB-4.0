@@ -208,13 +208,42 @@ _CSS = """
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_api_key() -> Optional[str]:
-    """Pull API key from st.secrets or environment."""
+    """
+    Pull Odds API key — tries every format people commonly use.
+
+    Format A (canonical):  [odds] section  ->  api_key = "..."
+    Format B:              flat             ->  ODDS_API_KEY = "..."
+    Format C:              flat             ->  api_key = "..."  (no section)
+    Format D:              environment var  ->  ODDS_API_KEY
+    """
+    import os
+
+    # A: [odds] / api_key  (the documented format)
     try:
-        return st.secrets["odds"]["api_key"]
+        key = st.secrets["odds"]["api_key"]
+        if key:
+            return str(key)
     except Exception:
         pass
-    import os
-    return os.environ.get("ODDS_API_KEY")
+
+    # B: flat ODDS_API_KEY
+    try:
+        key = st.secrets["ODDS_API_KEY"]
+        if key:
+            return str(key)
+    except Exception:
+        pass
+
+    # C: flat api_key (user forgot the [odds] header)
+    try:
+        key = st.secrets["api_key"]
+        if key:
+            return str(key)
+    except Exception:
+        pass
+
+    # D: environment variable
+    return os.environ.get("ODDS_API_KEY") or None
 
 
 @st.cache_data(ttl=300)   # 5-min cache — conserves quota
@@ -838,11 +867,20 @@ def _render_header() -> None:
 
 def _render_api_status(quota: Optional[Dict], prop_count: int) -> None:
     if quota is None:
+        # Debug: show what keys ARE present in secrets so user can diagnose
+        debug_info = ""
+        try:
+            import streamlit as _st
+            keys = list(_st.secrets.keys())
+            debug_info = f" (secrets keys found: {keys})" if keys else " (secrets appears empty)"
+        except Exception:
+            debug_info = " (could not read secrets)"
         st.markdown(
             '<div class="api-banner warn odds-root">'
-            '⚠️ <strong>No API key configured.</strong>  '
-            'Add <code>[odds] api_key</code> to <code>.streamlit/secrets.toml</code> '
-            'for live odds — or use Manual Entry below.</div>',
+            f'⚠️ <strong>No API key configured.</strong>  '
+            f'Add <code>[odds]<br>api_key = "your_key"</code> to '
+            f'<code>.streamlit/secrets.toml</code> or Streamlit Cloud secrets.{debug_info}'
+            '</div>',
             unsafe_allow_html=True,
         )
         return
