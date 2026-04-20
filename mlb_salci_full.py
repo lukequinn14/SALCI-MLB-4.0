@@ -116,6 +116,13 @@ try:
 except ImportError:
     PITCHING_DASH_AVAILABLE = False
 
+
+try:
+    from odds_tab import render_odds_tab
+    ODDS_TAB_AVAILABLE = True
+except ImportError:
+    ODDS_TAB_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Social Content Tab Integration
 # ---------------------------------------------------------------------------
@@ -2512,10 +2519,10 @@ def main():
     current_season = get_current_season(selected_date)
     
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "⚾ Pitcher Analysis", "🏏 Hitter Matchups", "🎯 Best Bets",
         "🔥 Heat Maps", "📊 Charts & Share", "📈 Yesterday",
-        "🎯 Model Accuracy", "📡 Team Pitching", "📣 Social Content",
+        "🎯 Model Accuracy", "📡 Team Pitching", "📣 Social Content", "💰 Odds Intelligence",
     ])
     
     # Fetch games
@@ -3594,6 +3601,15 @@ def main():
                 "Place it in the same folder as `mlb_salci_full.py` "
                 "and add `ANTHROPIC_API_KEY` to `.streamlit/secrets.toml`."
             )
+
+    with tab10:
+        if ODDS_TAB_AVAILABLE:
+            render_odds_tab(
+                pitchers_data=pitchers if 'pitchers' in dir() else None,
+                games=games,
+            )
+        else:
+            st.error("❌ odds_tab.py not found in app directory.")
 
 if __name__ == "__main__":
     main()
