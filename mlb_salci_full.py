@@ -3147,12 +3147,22 @@ def main():
                 # Card view
                 for result in filtered_pitchers:
                     if result.get("lineup_confirmed"):
-                        st.markdown(f"<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>", 
+                        st.markdown(f"<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>",
                                    unsafe_allow_html=True)
                     else:
-                        st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>", 
+                        st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>",
                                    unsafe_allow_html=True)
-                    render_pitcher_card(result)
+                    # Find the opponent hitters: they belong to the team this pitcher is FACING
+                    opp_team = result.get("opponent")
+                    card_opp_hitters = (
+                        sorted(
+                            [h for h in all_hitter_results
+                             if h.get("game_pk") == result.get("game_pk") and h.get("team") == opp_team],
+                            key=lambda h: h.get("hit_prob_score") if h.get("hit_prob_score") is not None else h.get("score", 0),
+                            reverse=True,
+                        ) or None
+                    )
+                    render_pitcher_card(result, opp_hitters=card_opp_hitters)
 
             render_compact_summary(all_pitcher_results)
             
