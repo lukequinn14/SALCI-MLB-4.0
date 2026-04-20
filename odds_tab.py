@@ -748,10 +748,11 @@ def _edge_class(edge: float) -> str:
 # MANUAL PROP ENTRY (fallback when no API key)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def render_manual_entry() -> List[Dict]:
+def render_manual_entry(form_key: str = "manual_props_form") -> List[Dict]:
     """
     Let users input props manually when API key isn't configured.
     Returns list of raw prop dicts matching extract_props_from_event format.
+    form_key must be unique per call site to avoid Streamlit duplicate-key errors.
     """
     st.markdown(
         '<p class="odds-section-hdr">✏️ Manual Prop Entry</p>',
@@ -761,7 +762,7 @@ def render_manual_entry() -> List[Dict]:
         "No API key configured — enter props manually for instant edge analysis."
     )
 
-    with st.form("manual_props_form"):
+    with st.form(form_key):
         cols = st.columns([2, 1.5, 1.2, 1.0, 1.0, 1.0])
         with cols[0]: player   = st.text_input("Player", placeholder="Gerrit Cole")
         with cols[1]: prop_lbl = st.selectbox("Prop Type", list(MARKET_LABELS.values()))
@@ -1069,7 +1070,7 @@ def render_odds_tab(
 
         if not filtered and not api_key:
             # No API key — show manual entry
-            manual_props = render_manual_entry()
+            manual_props = render_manual_entry(form_key="manual_form_tab1a")
             if manual_props:
                 enriched_manual = enrich_props_with_salci(manual_props, pitchers_data)
                 _render_props_table(enriched_manual, show_nobet=True)
@@ -1077,7 +1078,7 @@ def render_odds_tab(
             _render_props_table(filtered, show_nobet=show_nobet)
         else:
             st.info("No props to display. Configure an API key or add props manually.")
-            render_manual_entry()
+            render_manual_entry(form_key="manual_form_tab1b")
 
     # ── TAB 2: Top Plays ──────────────────────────────────────────────────────
     with inner_tab2:
@@ -1088,8 +1089,8 @@ def render_odds_tab(
             _render_top_play_cards(filtered, top_n=n_top)
         else:
             st.info("Add props via API or manual entry to see ranked plays.")
-            # Allow manual entry here too
-            manual_from_tab2 = render_manual_entry()
+            # Allow manual entry here too — unique key required
+            manual_from_tab2 = render_manual_entry(form_key="manual_form_tab2")
             if manual_from_tab2:
                 enriched = enrich_props_with_salci(manual_from_tab2, pitchers_data)
                 _render_top_play_cards(enriched, top_n=n_top)
