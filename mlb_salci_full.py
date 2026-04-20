@@ -1958,7 +1958,11 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
         # Show individual hitter rows if we have data
         if opp_hitters:
             # Sort: hot hitters first (score desc), take top 3
-            sorted_hitters = sorted(opp_hitters, key=lambda h: h.get("score", 0), reverse=True)
+            sorted_hitters = sorted(
+                opp_hitters,
+                key=lambda h: h.get("hit_prob_score") if h.get("hit_prob_score") is not None else h.get("score", 0),
+                reverse=True,
+            )
             top_hitters    = sorted_hitters[:3]
 
             for h in top_hitters:
