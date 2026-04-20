@@ -1554,7 +1554,7 @@ def get_team_logo_url(team_name: str) -> str:
 # ----------------------------
 # UI Rendering Functions
 # ----------------------------
-def render_pitcher_card(result: Dict, show_stuff_location: bool = True):
+def render_pitcher_card(result: Dict, show_stuff_location: bool = True, opp_hitters=None):
     """Render pitcher card with SALCI v4 component breakdown + At Least Ks floor."""
     salci = result["salci"]
     rating_label, emoji, css_class = get_rating(salci)
@@ -3605,7 +3605,7 @@ def main():
     with tab10:
         if ODDS_TAB_AVAILABLE:
             render_odds_tab(
-                pitchers_data=pitchers if 'pitchers' in dir() else None,
+                pitchers_data=all_pitcher_results if all_pitcher_results else None,
                 games=games,
             )
         else:
