@@ -133,6 +133,15 @@ try:
 except ImportError:
     pass  # Graceful — social content tab simply won't appear
 
+CARD_GEN_AVAILABLE = False
+try:
+    from salci_card_generator import (
+        generate_card, card_to_bytes, DARK_THEME, LIGHT_THEME,
+    )
+    CARD_GEN_AVAILABLE = True
+except ImportError:
+    pass
+
 # ----------------------------
 # Version Info
 # ----------------------------
@@ -3291,7 +3300,60 @@ def main():
                     st.info("Not enough data")
             
             st.markdown("---")
-            
+
+            # === SHAREABLE PNG CARDS ===
+            if CARD_GEN_AVAILABLE:
+                st.markdown("#### 🖼️ Shareable Cards")
+                st.caption("Download a ready-to-post PNG card for Twitter/X.")
+
+                c_theme, c_dl_dark, c_dl_light = st.columns([2, 1, 1])
+                with c_theme:
+                    card_date = datetime.today().strftime("%b %d, %Y")
+
+                with c_dl_dark:
+                    try:
+                        dark_img   = generate_card(
+                            confirmed_pitchers, DARK_THEME,
+                            card_type="Today's Top Pitchers",
+                            date_str=card_date,
+                        )
+                        dark_bytes = card_to_bytes(dark_img)
+                        st.download_button(
+                            label="⬇️ Dark Card (PNG)",
+                            data=dark_bytes,
+                            file_name=f"salci_card_dark_{datetime.today().strftime('%Y%m%d')}.png",
+                            mime="image/png",
+                            use_container_width=True,
+                        )
+                    except Exception as e:
+                        st.error(f"Dark card error: {e}")
+
+                with c_dl_light:
+                    try:
+                        light_img   = generate_card(
+                            confirmed_pitchers, LIGHT_THEME,
+                            card_type="Today's Top Pitchers",
+                            date_str=card_date,
+                        )
+                        light_bytes = card_to_bytes(light_img)
+                        st.download_button(
+                            label="⬇️ Light Card (PNG)",
+                            data=light_bytes,
+                            file_name=f"salci_card_light_{datetime.today().strftime('%Y%m%d')}.png",
+                            mime="image/png",
+                            use_container_width=True,
+                        )
+                    except Exception as e:
+                        st.error(f"Light card error: {e}")
+
+                # Preview the dark card inline
+                try:
+                    st.image(dark_bytes, caption="Dark card preview", use_container_width=True)
+                except Exception:
+                    pass
+
+            st.markdown("---")
+
             # === YOUR ORIGINAL CHARTS (unchanged) ===
             col1, col2 = st.columns(2)
             with col1:
