@@ -3,8 +3,12 @@
 salci_card_generator.py
 =======================
 Generates shareable PNG cards for SALCI pitcher projections.
-Uses Pillow (PIL) only — no external font files or system libraries required.
-SVG logos require cairosvg + system cairo; falls back to team-initial circles.
+
+Row layout per pitcher (left → right):
+  [Team Logo] | [Pitcher Name / Matchup] | [Grade Badge] | [Exp Ks] | [K% Pills]
+
+Logo source: ESPN CDN PNGs fetched server-side with browser headers.
+Name resolution logic mirrors pitching_dashboard_tab.py exactly.
 """
 
 from PIL import Image, ImageDraw, ImageFont
@@ -14,19 +18,40 @@ from datetime import datetime
 import pytz
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONSTANTS
+# CARD DIMENSIONS & LAYOUT
 # ─────────────────────────────────────────────────────────────────────────────
 
-CARD_WIDTH = 1200
-BRAND      = "SALCI"
-HANDLE     = "@SALCI"
-HASHTAGS   = "#SALCI  #MLB  #Strikeouts"
+CARD_W   = 1200
+HEADER_H = 90
+ROW_H    = 72
+SECTION_H= 36
+FOOTER_H = 56
+PAD      = 28
+
+# Column x-positions inside each row
+COL_LOGO   = PAD                  # logo left edge
+COL_NAME   = PAD + 56 + 14        # pitcher name
+COL_GRADE  = 490                  # grade badge centre-x
+COL_EXP    = 590                  # expected Ks
+COL_PILLS  = 730                  # first K pill
+
+LOGO_SIZE  = (52, 52)
+
+BRAND    = "SALCI"
+HANDLE   = "@SALCI"
+HASHTAGS = "#SALCI  #MLB  #Strikeouts"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THEMES
+# ─────────────────────────────────────────────────────────────────────────────
 
 DARK_THEME = {
     "bg":             (10, 17, 30),
-    "card_row":       (20, 30, 50),
+    "row_even":       (18, 28, 46),
+    "row_odd":        (10, 17, 30),
+    "section_bg":     (22, 35, 58),
     "accent":         (16, 185, 129),
-    "text_primary":   (255, 255, 255),
+    "text_primary":   (241, 245, 249),
     "text_secondary": (148, 163, 184),
     "text_muted":     (71, 85, 105),
     "grade_s":        (167, 139, 250),
@@ -34,402 +59,394 @@ DARK_THEME = {
     "grade_b":        (59, 130, 246),
     "grade_c":        (148, 163, 184),
     "divider":        (30, 41, 59),
-    "logo_variant":   "dark",
+    "dark_bg":        True,
 }
 
 LIGHT_THEME = {
     "bg":             (248, 250, 252),
-    "card_row":       (255, 255, 255),
+    "row_even":       (255, 255, 255),
+    "row_odd":        (241, 245, 249),
+    "section_bg":     (226, 232, 240),
     "accent":         (15, 118, 110),
     "text_primary":   (15, 23, 42),
     "text_secondary": (71, 85, 105),
     "text_muted":     (148, 163, 184),
     "grade_s":        (124, 58, 237),
-    "grade_a":        (217, 119, 6),
+    "grade_a":        (180, 100, 0),
     "grade_b":        (37, 99, 235),
     "grade_c":        (100, 116, 139),
-    "divider":        (226, 232, 240),
-    "logo_variant":   "light",
+    "divider":        (203, 213, 225),
+    "dark_bg":        False,
 }
 
-# Text-safe grade labels (no emoji — PIL default font may not support them)
-GRADE_LABEL = {
-    "S": "S+", "A": "A", "A+": "A+", "A-": "A-",
+GRADE_TEXT = {
+    "S": "S+", "A+": "A+", "A": "A", "A-": "A-",
     "B+": "B+", "B": "B", "B-": "B-",
     "C": "C", "D": "D", "F": "F",
 }
 
-MLB_LOGO_DARK_URL  = "https://www.mlbstatic.com/team-logos/team-cap-on-dark/{team_id}.svg"
-MLB_LOGO_COLOR_URL = "https://www.mlbstatic.com/team-logos/{team_id}.svg"
+# ─────────────────────────────────────────────────────────────────────────────
+# ESPN LOGO RESOLUTION  (mirrors pitching_dashboard_tab.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ABBREV_TO_ESPN = {
+    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
+    "CHC": "chc", "CWS": "chw", "CIN": "cin",
+    "CLE": "cle", "COL": "col", "DET": "det", "HOU": "hou",
+    "KC":  "kc",  "LAA": "laa", "LAD": "lad", "MIA": "mia",
+    "MIL": "mil", "MIN": "min", "NYM": "nym", "NYY": "nyy",
+    "OAK": "oak", "PHI": "phi", "PIT": "pit", "SD":  "sd",
+    "SF":  "sf",  "SEA": "sea", "STL": "stl",
+    "TB":  "tb",  "TEX": "tex", "TOR": "tor", "WSH": "wsh",
+}
+
+_FULL_TO_ABBREV = {
+    "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL",
+    "Baltimore Orioles": "BAL",    "Boston Red Sox": "BOS",
+    "Chicago Cubs": "CHC",         "Chicago White Sox": "CWS",
+    "Cincinnati Reds": "CIN",      "Cleveland Guardians": "CLE",
+    "Colorado Rockies": "COL",     "Detroit Tigers": "DET",
+    "Houston Astros": "HOU",       "Kansas City Royals": "KC",
+    "Los Angeles Angels": "LAA",   "Los Angeles Dodgers": "LAD",
+    "Miami Marlins": "MIA",        "Milwaukee Brewers": "MIL",
+    "Minnesota Twins": "MIN",      "New York Mets": "NYM",
+    "New York Yankees": "NYY",     "Oakland Athletics": "OAK",
+    "Philadelphia Phillies": "PHI","Pittsburgh Pirates": "PIT",
+    "San Diego Padres": "SD",      "San Francisco Giants": "SF",
+    "Seattle Mariners": "SEA",     "St. Louis Cardinals": "STL",
+    "Tampa Bay Rays": "TB",        "Texas Rangers": "TEX",
+    "Toronto Blue Jays": "TOR",    "Washington Nationals": "WSH",
+    "Athletics": "OAK", "A's": "OAK", "Guardians": "CLE",
+    "Nationals": "WSH", "Cardinals": "STL", "Brewers": "MIL",
+    "Padres": "SD", "Giants": "SF", "Mariners": "SEA",
+    "Rockies": "COL", "Marlins": "MIA", "Twins": "MIN",
+    "Rays": "TB", "Yankees": "NYY", "Mets": "NYM",
+    "Cubs": "CHC", "White Sox": "CWS", "Red Sox": "BOS",
+    "Blue Jays": "TOR", "Royals": "KC", "Angels": "LAA",
+    "Dodgers": "LAD", "Phillies": "PHI", "Pirates": "PIT",
+    "Rangers": "TEX", "Orioles": "BAL", "Braves": "ATL",
+    "Reds": "CIN", "Tigers": "DET", "Astros": "HOU",
+    "Diamondbacks": "ARI", "D-backs": "ARI",
+}
+
+_DARK_BG_TEAMS = {"COL", "SD", "NYY", "MIN", "KC", "PIT", "MIL", "CWS", "SF"}
+
+_ESPN_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Referer":  "https://www.espn.com/mlb/",
+    "Accept":   "image/webp,image/apng,image/*,*/*;q=0.8",
+}
 
 _LOGO_CACHE: dict = {}
 
-# Layout
-HEADER_H  = 80
-ROW_H     = 60
-SECTION_H = 40
-FOOTER_H  = 60
-PAD       = 24
+
+def _resolve_abbrev(team: str) -> str:
+    """Convert any team name/alias/abbrev to canonical 2-3 letter abbrev."""
+    t = team.strip()
+    if t in _FULL_TO_ABBREV:
+        return _FULL_TO_ABBREV[t]
+    upper = t.upper()
+    if upper in _ABBREV_TO_ESPN:
+        return upper
+    lower = t.lower()
+    for alias, abbrev in _FULL_TO_ABBREV.items():
+        if alias.lower() == lower:
+            return abbrev
+    best, best_len = None, 0
+    for full, abbrev in _FULL_TO_ABBREV.items():
+        fl = full.lower()
+        if fl in lower or lower in fl:
+            if len(full) > best_len:
+                best, best_len = abbrev, len(full)
+    return best if best else upper
+
+
+def _espn_url(abbrev: str, dark_bg: bool) -> str:
+    slug = _ABBREV_TO_ESPN.get(abbrev, abbrev.lower())
+    if dark_bg and abbrev in _DARK_BG_TEAMS:
+        return f"https://a.espncdn.com/i/teamlogos/mlb/500-dark/{slug}.png"
+    return f"https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/{slug}.png"
+
+
+def _fetch_logo(team: str, size: tuple, dark_bg: bool) -> Image.Image:
+    """
+    Fetch ESPN team logo PNG and return as RGBA PIL Image.
+    Results are cached. Falls back to a colored-initial circle on error.
+    """
+    abbrev    = _resolve_abbrev(team)
+    cache_key = (abbrev, size, dark_bg)
+    if cache_key in _LOGO_CACHE:
+        return _LOGO_CACHE[cache_key]
+
+    url = _espn_url(abbrev, dark_bg)
+    try:
+        r = requests.get(url, headers=_ESPN_HEADERS, timeout=8)
+        if r.status_code == 200:
+            img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+            img = img.resize(size, Image.LANCZOS)
+            _LOGO_CACHE[cache_key] = img
+            return img
+    except Exception:
+        pass
+
+    # Fallback: colored circle with abbreviation
+    img  = _circle_placeholder(abbrev, size)
+    _LOGO_CACHE[cache_key] = img
+    return img
+
+
+_CIRCLE_COLORS = {
+    "A": (14,99,62),   "B": (12,35,64),   "C": (204,52,51),
+    "D": (12,35,64),   "H": (0,45,98),    "K": (0,70,135),
+    "L": (0,90,156),   "M": (19,41,75),   "N": (0,45,98),
+    "O": (239,56,26),  "P": (253,184,39), "S": (45,130,69),
+    "T": (0,56,120),   "W": (171,0,3),
+}
+
+def _circle_placeholder(abbrev: str, size: tuple) -> Image.Image:
+    img  = Image.new("RGBA", size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    w, h = size
+    color = _CIRCLE_COLORS.get((abbrev or "?")[0].upper(), (60, 80, 140))
+    draw.ellipse([2, 2, w-3, h-3], fill=color + (255,))
+    label = abbrev[:3].upper()
+    font  = _font(max(9, w // 4))
+    bb    = draw.textbbox((0, 0), label, font=font)
+    tw, th = bb[2]-bb[0], bb[3]-bb[1]
+    draw.text(((w-tw)//2, (h-th)//2), label, fill=(255,255,255,255), font=font)
+    return img
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
+# FONT HELPER
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _font(size: int = 16) -> ImageFont.FreeTypeFont:
-    """
-    Return a TrueType font at the requested size.
-    Tries common system font paths (Streamlit Cloud = Ubuntu/DejaVu,
-    macOS = Helvetica/Arial) before falling back to PIL's bundled default.
-    """
-    _FONT_PATHS = [
-        # Ubuntu / Streamlit Cloud
+    """TrueType font at requested size. Tries system paths before PIL default."""
+    for path in [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        # macOS
         "/System/Library/Fonts/Helvetica.ttc",
         "/Library/Fonts/Arial.ttf",
         "/System/Library/Fonts/SFNSText.ttf",
-        "/System/Library/Fonts/SFNSDisplay.ttf",
-    ]
-    for path in _FONT_PATHS:
+    ]:
         try:
             return ImageFont.truetype(path, size)
         except (IOError, OSError):
             continue
-    # Final fallback — PIL bundled bitmap font (Pillow 10+ accepts size)
     try:
         return ImageFont.load_default(size=size)
     except TypeError:
         return ImageFont.load_default()
 
 
-def _blend(fg: tuple, bg: tuple, alpha: float) -> tuple:
-    """Blend fg RGB over bg RGB with alpha 0–1. Returns RGB tuple."""
-    return tuple(int(fg[i] * alpha + bg[i] * (1 - alpha)) for i in range(3))
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-def _text_size(draw: ImageDraw.ImageDraw, text: str,
-               font: ImageFont.FreeTypeFont) -> tuple:
-    """Return (width, height) of text string."""
+def _tw(draw, text, font):
+    """Text width."""
     bb = draw.textbbox((0, 0), text, font=font)
-    return bb[2] - bb[0], bb[3] - bb[1]
+    return bb[2] - bb[0]
+
+def _th(draw, text, font):
+    """Text height."""
+    bb = draw.textbbox((0, 0), text, font=font)
+    return bb[3] - bb[1]
+
+def _blend(fg, bg, a):
+    return tuple(int(fg[i]*a + bg[i]*(1-a)) for i in range(3))
+
+def _grade_color(grade: str, theme: dict) -> tuple:
+    g = (grade or "C").upper()
+    if g == "S":             return theme["grade_s"]
+    if g in ("A","A+","A-"): return theme["grade_a"]
+    if g in ("B","B+","B-"): return theme["grade_b"]
+    return theme["grade_c"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. TEAM LOGO FETCHER
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Consistent placeholder colors keyed by first letter of team abbrev
-_PLACEHOLDER_COLORS = {
-    "A": (14, 99, 62),  "B": (12, 35, 64),  "C": (204, 52, 51),
-    "D": (12, 35, 64),  "H": (0, 45, 98),   "K": (0, 70, 135),
-    "L": (0, 90, 156),  "M": (19, 41, 75),  "N": (0, 45, 98),
-    "O": (239, 56, 26), "P": (253, 184, 39), "S": (45, 130, 69),
-    "T": (0, 56, 120),  "W": (171, 0, 3),
-}
-
-# team_id → 3-letter abbreviation for placeholder labels
-_TEAM_ID_ABBREV = {
-    108: "LAA", 109: "ARI", 110: "BAL", 111: "BOS", 112: "CHC",
-    113: "CIN", 114: "CLE", 115: "COL", 116: "DET", 117: "HOU",
-    118: "KC",  119: "LAD", 120: "WSH", 121: "NYM", 133: "OAK",
-    134: "PIT", 135: "SD",  136: "SEA", 137: "SF",  138: "STL",
-    139: "TB",  140: "TEX", 141: "TOR", 142: "MIN", 143: "PHI",
-    144: "ATL", 145: "CWS", 146: "MIA", 147: "NYY", 158: "MIL",
-}
-
-
-def _abbrev_from_name(name: str) -> str:
-    """
-    Derive a 3-char display label from a full team name.
-    Strips non-alpha characters then takes the first 3 letters.
-    'St. Louis Cardinals' → 'STL', 'New York Yankees' → 'NEW'.
-    """
-    import re
-    clean = re.sub(r"[^a-zA-Z]", "", name)
-    return clean[:3].upper() if clean else "???"
-
-
-def _placeholder_logo(team_abbrev: str, size: tuple, bg: tuple) -> Image.Image:
-    """Colored circle with a 3-letter team label."""
-    img  = Image.new("RGBA", size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    w, h = size
-    # Clean label: if it looks like a full team name, derive a short label
-    raw = (team_abbrev or "?").strip()
-    label = raw[:3].upper() if len(raw) <= 4 else _abbrev_from_name(raw)
-    first = label[0] if label else "?"
-    color = _PLACEHOLDER_COLORS.get(first, (60, 80, 140))
-    draw.ellipse([2, 2, w - 3, h - 3], fill=color + (255,))
-    font   = _font(max(9, w // 4))
-    tw, th = _text_size(draw, label, font)
-    draw.text(((w - tw) // 2, (h - th) // 2), label,
-              fill=(255, 255, 255, 255), font=font)
-    return img
-
-
-def get_team_logo(team_id: int, variant: str, size: tuple,
-                  team_abbrev: str = "") -> Image.Image:
-    """
-    Fetch MLB team logo SVG from CDN and convert to RGBA PIL Image.
-    Requires cairosvg + system cairo library; falls back to colored circle.
-    """
-    cache_key = (team_id, variant, size)
-    if cache_key in _LOGO_CACHE:
-        return _LOGO_CACHE[cache_key]
-
-    url = (MLB_LOGO_DARK_URL if variant == "dark"
-           else MLB_LOGO_COLOR_URL).format(team_id=team_id)
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; SALCI/1.0)",
-            "Accept": "image/svg+xml,*/*",
-        }
-        resp = requests.get(url, headers=headers, timeout=8)
-        if resp.status_code == 200:
-            try:
-                import cairosvg
-                png_bytes = cairosvg.svg2png(
-                    bytestring=resp.content,
-                    output_width=size[0],
-                    output_height=size[1],
-                )
-                img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                _LOGO_CACHE[cache_key] = img
-                return img
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # Resolve a clean abbreviation for the placeholder label
-    clean_abbrev = (
-        _TEAM_ID_ABBREV.get(team_id)
-        or (_abbrev_from_name(team_abbrev) if len(team_abbrev) > 4 else team_abbrev.upper())
-    )
-    img = _placeholder_logo(clean_abbrev, size, (30, 60, 120))
-    _LOGO_CACHE[cache_key] = img
-    return img
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. GAME-TIME SPLITTER
+# SPLIT BY GAME TIME
 # ─────────────────────────────────────────────────────────────────────────────
 
 def split_by_gametime(pitchers: list) -> tuple:
-    """
-    Split pitchers into early (before 17:00 ET) and late (17:00+ ET) buckets.
-    Returns (early_pitchers, late_pitchers), each sorted by salci desc.
-    If game_datetime is None the pitcher goes to the late bucket.
-    """
     ET = pytz.timezone("America/New_York")
     early, late = [], []
-
     for p in pitchers:
         dt_str = p.get("game_datetime")
         if dt_str:
             try:
                 dt_utc = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                dt_et  = dt_utc.astimezone(ET)
-                bucket = early if dt_et.hour < 17 else late
-                bucket.append(p)
+                (early if dt_utc.astimezone(ET).hour < 17 else late).append(p)
                 continue
             except Exception:
                 pass
         late.append(p)
-
     early.sort(key=lambda x: x.get("salci", 0), reverse=True)
     late.sort(key=lambda x: x.get("salci", 0), reverse=True)
     return early, late
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. GRADE COLOR
+# DRAW FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_grade_color(grade: str, theme: dict) -> tuple:
-    """Return RGB color tuple for a SALCI grade from the active theme."""
-    g = (grade or "C").upper()
-    if g == "S":
-        return theme["grade_s"]
-    if g in ("A", "A+", "A-"):
-        return theme["grade_a"]
-    if g in ("B", "B+", "B-"):
-        return theme["grade_b"]
-    return theme["grade_c"]
+def _draw_header(draw, img, theme, date_str, card_type):
+    """Brand left · title centre · date+handle right · divider."""
+    # Left — brand
+    bf = _font(30)
+    draw.text((PAD, 22), BRAND, fill=theme["accent"], font=bf)
 
+    # Centre — card type
+    tf = _font(20)
+    w  = _tw(draw, card_type, tf)
+    draw.text(((CARD_W - w) // 2, 28), card_type,
+              fill=theme["text_primary"], font=tf)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. DRAW HEADER
-# ─────────────────────────────────────────────────────────────────────────────
-
-def draw_header(draw: ImageDraw.ImageDraw, img: Image.Image,
-                theme: dict, date_str: str, card_type: str) -> None:
-    """Draw brand (left), card title (centre), date+handle (right), divider."""
-    # Brand — left
-    brand_font = _font(30)
-    draw.text((PAD, 18), BRAND, fill=theme["accent"], font=brand_font)
-
-    # Card type — centre
-    title_font = _font(22)
-    tw, _ = _text_size(draw, card_type, title_font)
-    draw.text(((CARD_WIDTH - tw) // 2, 26), card_type,
-              fill=theme["text_primary"], font=title_font)
-
-    # Date + handle — right
-    meta_font = _font(15)
-    meta_text = f"{date_str}  {HANDLE}"
-    mw, _ = _text_size(draw, meta_text, meta_font)
-    draw.text((CARD_WIDTH - mw - PAD, 30), meta_text,
-              fill=theme["text_muted"], font=meta_font)
+    # Right — date + handle
+    mf   = _font(14)
+    meta = f"{date_str}  {HANDLE}"
+    mw   = _tw(draw, meta, mf)
+    draw.text((CARD_W - mw - PAD, 32), meta,
+              fill=theme["text_muted"], font=mf)
 
     # Divider
-    draw.line([(PAD, HEADER_H - 2), (CARD_WIDTH - PAD, HEADER_H - 2)],
+    draw.line([(PAD, HEADER_H - 2), (CARD_W - PAD, HEADER_H - 2)],
               fill=theme["divider"], width=2)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. DRAW PITCHER ROW
-# ─────────────────────────────────────────────────────────────────────────────
+def _draw_section(draw, theme, label, y):
+    """Thin section-header strip. Returns SECTION_H."""
+    draw.rectangle([0, y, CARD_W, y + SECTION_H], fill=theme["section_bg"])
+    f = _font(13)
+    draw.text((PAD, y + (SECTION_H - _th(draw, label, f)) // 2),
+              label, fill=theme["text_secondary"], font=f)
+    return SECTION_H
 
-def draw_pitcher_row(draw: ImageDraw.ImageDraw, img: Image.Image,
-                     theme: dict, pitcher: dict, y_pos: int,
-                     row_width: int, row_index: int = 0) -> int:
-    """Draw one pitcher row. Returns ROW_H (60px)."""
-    # Alternating row background
-    row_bg = theme["card_row"] if row_index % 2 == 0 else theme["bg"]
-    draw.rectangle([0, y_pos, row_width, y_pos + ROW_H], fill=row_bg)
 
-    # ── Team logo (40×40) ─────────────────────────────────────────────────
-    logo_size = (40, 40)
-    logo_x    = PAD
-    logo_y    = y_pos + (ROW_H - logo_size[1]) // 2
-    team_id   = pitcher.get("team_id")
-    team_abbr = pitcher.get("team", "?")
+def _draw_row(draw, img, theme, pitcher, y, idx):
+    """
+    Draw one pitcher row.
 
-    logo = get_team_logo(
-        team_id or 0, theme["logo_variant"], logo_size, team_abbr
-    )
-    img.paste(logo, (logo_x, logo_y), logo)   # RGBA logo → uses alpha as mask
+    Left → right:
+      [Logo 52×52] | [Last Name  Hand · Team vs Opp] | [Grade] | [Exp Ks] | [K% pills]
+    """
+    row_bg = theme["row_even"] if idx % 2 == 0 else theme["row_odd"]
+    draw.rectangle([0, y, CARD_W, y + ROW_H], fill=row_bg)
 
-    # ── Pitcher name + team label ─────────────────────────────────────────
-    name_font  = _font(18)
-    small_font = _font(13)
-    last_name  = pitcher.get("pitcher", "Unknown").split()[-1]
-    hand       = pitcher.get("pitcher_hand", "R")
-    draw.text((PAD + 50, y_pos + 10), f"{last_name} ({hand})",
-              fill=theme["text_primary"], font=name_font)
-    draw.text((PAD + 50, y_pos + 34), team_abbr,
-              fill=theme["text_secondary"], font=small_font)
+    # ── Logo ──────────────────────────────────────────────────────────────
+    team      = pitcher.get("team", "")
+    dark_bg   = theme["dark_bg"]
+    logo      = _fetch_logo(team, LOGO_SIZE, dark_bg)
+    logo_y    = y + (ROW_H - LOGO_SIZE[1]) // 2
+    img.paste(logo, (COL_LOGO, logo_y), logo)
 
-    # ── SALCI grade badge ─────────────────────────────────────────────────
-    grade       = pitcher.get("salci_grade", "C")
-    grade_color = get_grade_color(grade, theme)
-    badge_text  = GRADE_LABEL.get(grade.upper(), grade)
-    badge_font  = _font(16)
-    bw, bh      = _text_size(draw, badge_text, badge_font)
-    bw += 20; bh += 10
-    bx = 320
-    by = y_pos + (ROW_H - bh) // 2
-    badge_bg = _blend(grade_color, row_bg, 0.18)
+    # ── Pitcher name + matchup ────────────────────────────────────────────
+    last_name = pitcher.get("pitcher", "Unknown").split()[-1]
+    hand      = pitcher.get("pitcher_hand", "R")
+    opponent  = pitcher.get("opponent", "")
+    abbrev    = _resolve_abbrev(team) if team else ""
+
+    name_f = _font(20)
+    sub_f  = _font(13)
+    name_label = f"{last_name}  ({hand}HP)"
+    sub_label  = f"{abbrev}  vs  {_resolve_abbrev(opponent) if opponent else opponent}"
+
+    name_y = y + (ROW_H // 2) - _th(draw, name_label, name_f) - 2
+    sub_y  = y + (ROW_H // 2) + 3
+
+    draw.text((COL_NAME, name_y), name_label,
+              fill=theme["text_primary"], font=name_f)
+    draw.text((COL_NAME, sub_y), sub_label,
+              fill=theme["text_secondary"], font=sub_f)
+
+    # ── Grade badge ───────────────────────────────────────────────────────
+    grade      = pitcher.get("salci_grade", "C")
+    grade_lbl  = GRADE_TEXT.get(grade.upper(), grade)
+    grade_col  = _grade_color(grade, theme)
+    gf         = _font(15)
+    gw         = _tw(draw, grade_lbl, gf)
+    gh         = _th(draw, grade_lbl, gf)
+    bw, bh     = gw + 20, gh + 10
+    bx         = COL_GRADE
+    by         = y + (ROW_H - bh) // 2
+    badge_bg   = _blend(grade_col, row_bg, 0.20)
     draw.rounded_rectangle([bx, by, bx + bw, by + bh],
-                            radius=6, fill=badge_bg, outline=grade_color, width=2)
-    draw.text((bx + 10, by + 5), badge_text, fill=grade_color, font=badge_font)
+                            radius=5, fill=badge_bg, outline=grade_col, width=2)
+    draw.text((bx + 10, by + 5), grade_lbl, fill=grade_col, font=gf)
 
     # ── Expected Ks ───────────────────────────────────────────────────────
-    exp      = pitcher.get("expected", 0)
-    exp_font = _font(26)
-    exp_str  = str(exp)
-    draw.text((440, y_pos + 12), exp_str, fill=theme["accent"], font=exp_font)
-    draw.text((440 + _text_size(draw, exp_str, exp_font)[0] + 6, y_pos + 22),
-              "K exp", fill=theme["text_secondary"], font=small_font)
+    exp     = pitcher.get("expected", "--")
+    exp_f   = _font(26)
+    lbl_f   = _font(12)
+    exp_str = str(exp)
+    ey      = y + (ROW_H - _th(draw, exp_str, exp_f)) // 2
+    draw.text((COL_EXP, ey), exp_str, fill=theme["accent"], font=exp_f)
+    draw.text((COL_EXP + _tw(draw, exp_str, exp_f) + 5,
+               ey + _th(draw, exp_str, exp_f) - _th(draw, "K", lbl_f) - 2),
+              "K", fill=theme["text_secondary"], font=lbl_f)
 
-    # ── K-line pills (top 2 by probability) ──────────────────────────────
+    # ── K% pills — top 3 by K threshold value (ascending) ────────────────
     k_lines = pitcher.get("k_lines", {}) or pitcher.get("lines", {}) or {}
     if k_lines:
-        top2 = sorted(k_lines.items(), key=lambda x: x[1], reverse=True)[:2]
-        pill_x = 620
-        pill_font = _font(14)
-        for k_val, prob in top2:
+        items   = sorted(k_lines.items())[:4]
+        pill_x  = COL_PILLS
+        pill_f  = _font(13)
+        for k_val, prob in items:
             if prob >= 70:
-                pill_color = (34, 197, 94)
+                pc = (34, 197, 94)
             elif prob >= 50:
-                pill_color = (234, 179, 8)
+                pc = (234, 179, 8)
             else:
-                pill_color = (239, 68, 68)
+                pc = (239, 68, 68)
             pill_text = f"{k_val}+  {prob}%"
-            pw, ph    = _text_size(draw, pill_text, pill_font)
-            pw += 16; ph += 8
-            py = y_pos + (ROW_H - ph) // 2
-            pill_bg = _blend(pill_color, row_bg, 0.18)
-            draw.rounded_rectangle(
-                [pill_x, py, pill_x + pw, py + ph],
-                radius=4, fill=pill_bg, outline=pill_color, width=1,
-            )
-            draw.text((pill_x + 8, py + 4), pill_text,
-                      fill=pill_color, font=pill_font)
-            pill_x += pw + 10
+            pw = _tw(draw, pill_text, pill_f) + 16
+            ph = _th(draw, pill_text, pill_f) + 8
+            py = y + (ROW_H - ph) // 2
+            draw.rounded_rectangle([pill_x, py, pill_x + pw, py + ph],
+                                    radius=4,
+                                    fill=_blend(pc, row_bg, 0.18),
+                                    outline=pc, width=1)
+            draw.text((pill_x + 8, py + 4), pill_text, fill=pc, font=pill_f)
+            pill_x += pw + 8
 
     return ROW_H
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 6. DRAW SECTION HEADER
-# ─────────────────────────────────────────────────────────────────────────────
-
-def draw_section_header(draw: ImageDraw.ImageDraw, theme: dict,
-                        label: str, y_pos: int, width: int) -> int:
-    """Draw a section divider row. Returns SECTION_H (40px)."""
-    draw.rectangle([0, y_pos, width, y_pos + SECTION_H], fill=theme["divider"])
-    font = _font(15)
-    draw.text((PAD, y_pos + 12), label,
-              fill=theme["text_secondary"], font=font)
-    return SECTION_H
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7. DRAW FOOTER
-# ─────────────────────────────────────────────────────────────────────────────
-
-def draw_footer(draw: ImageDraw.ImageDraw, theme: dict,
-                width: int, total_height: int) -> None:
-    """Draw hashtags (centred) and SALCI watermark (bottom-right)."""
-    footer_y = total_height - FOOTER_H
-    draw.line([(PAD, footer_y + 2), (width - PAD, footer_y + 2)],
+def _draw_footer(draw, theme, total_h):
+    fy = total_h - FOOTER_H
+    draw.line([(PAD, fy + 2), (CARD_W - PAD, fy + 2)],
               fill=theme["divider"], width=1)
-
-    # Hashtags — centred
-    ht_font = _font(16)
-    hw, _   = _text_size(draw, HASHTAGS, ht_font)
-    draw.text(((width - hw) // 2, footer_y + 16), HASHTAGS,
-              fill=theme["text_secondary"], font=ht_font)
-
-    # Watermark — bottom right
-    wm_font = _font(13)
-    ww, _   = _text_size(draw, BRAND, wm_font)
-    draw.text((width - ww - PAD, footer_y + 38), BRAND,
-              fill=theme["text_muted"], font=wm_font)
+    hf = _font(15)
+    hw = _tw(draw, HASHTAGS, hf)
+    draw.text(((CARD_W - hw) // 2, fy + 14), HASHTAGS,
+              fill=theme["text_secondary"], font=hf)
+    wf = _font(12)
+    ww = _tw(draw, BRAND, wf)
+    draw.text((CARD_W - ww - PAD, fy + 36), BRAND,
+              fill=theme["text_muted"], font=wf)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8. GENERATE CARD
+# MAIN — GENERATE CARD
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_card(pitchers: list, theme: dict,
                   card_type: str = "Today's Top Pitchers",
                   date_str: str = "") -> Image.Image:
     """
-    Assemble the full shareable card image.
+    Assemble and return the full shareable card as a PIL Image (RGB).
 
-    Layout:
-        header (80px)
-        [section header (40px) + pitcher rows (60px each)] × 2 groups
-        footer (60px)
-        10px bottom padding
-
-    Returns a PIL Image (RGB).
+    Layout
+    ------
+    Header (90px)
+    [Section header (36px) + rows (72px each)] × up to 2 groups
+    Footer (56px)
     """
     if not date_str:
         date_str = datetime.now(
@@ -439,73 +456,43 @@ def generate_card(pitchers: list, theme: dict,
     early, late = split_by_gametime(pitchers)
     has_groups  = bool(early or late)
 
-    # Calculate total height (at 1× — we'll scale up internally)
-    n_sections  = sum([bool(early), bool(late)]) if has_groups else 0
-    n_pitchers  = len(early) + len(late) if has_groups else len(pitchers)
-    total_h     = (HEADER_H + n_sections * SECTION_H +
-                   n_pitchers * ROW_H + FOOTER_H + 10)
+    n_sections = sum([bool(early), bool(late)]) if has_groups else 0
+    n_pitchers = (len(early) + len(late)) if has_groups else len(pitchers)
+    total_h    = HEADER_H + n_sections * SECTION_H + n_pitchers * ROW_H + FOOTER_H + 8
 
-    # ── 2× supersampling: render at double size, downsample with LANCZOS ──
-    # Save 1× final dimensions BEFORE touching any constants.
-    final_w  = CARD_WIDTH
-    final_h  = total_h
-    SCALE    = 2
-    render_w = final_w * SCALE
-    render_h = final_h * SCALE
+    img  = Image.new("RGB", (CARD_W, total_h), theme["bg"])
+    draw = ImageDraw.Draw(img)
 
-    # Temporarily patch module-level layout constants for the hi-res pass.
-    import salci_card_generator as _self
-    _orig = {k: getattr(_self, k) for k in
-             ("CARD_WIDTH", "HEADER_H", "ROW_H", "SECTION_H", "FOOTER_H", "PAD")}
-    _self.CARD_WIDTH = render_w
-    _self.HEADER_H   = HEADER_H  * SCALE
-    _self.ROW_H      = ROW_H     * SCALE
-    _self.SECTION_H  = SECTION_H * SCALE
-    _self.FOOTER_H   = FOOTER_H  * SCALE
-    _self.PAD        = PAD       * SCALE
+    _draw_header(draw, img, theme, date_str, card_type)
+    y = HEADER_H + 8
 
-    try:
-        img  = Image.new("RGB", (render_w, render_h), theme["bg"])
-        draw = ImageDraw.Draw(img)
+    def _render_group(group, label):
+        nonlocal y
+        if not group:
+            return
+        y += _draw_section(draw, theme, label, y)
+        for idx, p in enumerate(group):
+            _draw_row(draw, img, theme, p, y, idx)
+            y += ROW_H
 
-        draw_header(draw, img, theme, date_str, card_type)
-        y = _self.HEADER_H + 10 * SCALE
+    if has_groups:
+        _render_group(early, "EARLY GAMES")
+        _render_group(late,  "LATE GAMES")
+    else:
+        for idx, p in enumerate(pitchers):
+            _draw_row(draw, img, theme, p, y, idx)
+            y += ROW_H
 
-        def _render_group(group: list, label: str) -> None:
-            nonlocal y
-            if not group:
-                return
-            y += draw_section_header(draw, theme, label, y, render_w)
-            for idx, pitcher in enumerate(group):
-                draw_pitcher_row(draw, img, theme, pitcher, y, render_w, idx)
-                y += _self.ROW_H
-
-        if has_groups:
-            _render_group(early, "EARLY GAMES")
-            _render_group(late,  "LATE GAMES")
-        else:
-            for idx, pitcher in enumerate(pitchers):
-                draw_pitcher_row(draw, img, theme, pitcher, y, render_w, idx)
-                y += _self.ROW_H
-
-        draw_footer(draw, theme, render_w, render_h)
-
-        # Downsample to final 1× size — LANCZOS gives crisp antialiased edges.
-        img = img.resize((final_w, final_h), Image.LANCZOS)
-    finally:
-        # Always restore original constants even if an exception occurs.
-        for k, v in _orig.items():
-            setattr(_self, k, v)
-
+    _draw_footer(draw, theme, total_h)
     return img
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 9. CARD TO BYTES
+# EXPORT
 # ─────────────────────────────────────────────────────────────────────────────
 
 def card_to_bytes(img: Image.Image) -> bytes:
-    """Convert PIL Image to PNG bytes suitable for a Streamlit download button."""
+    """Convert PIL Image to PNG bytes for a Streamlit download button."""
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
