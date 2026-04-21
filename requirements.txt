@@ -5,3 +5,5 @@ requests>=2.28.0
 plotly>=5.15.0
 pybaseball>=2.2.0
 scipy>=1.10.0
+pillow>=10.0.0
+pytz>=2023.3
