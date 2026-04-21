@@ -49,9 +49,9 @@ jobs:
           SEASON:    ${{ github.event.inputs.season }}
         run: |
           if [ -n "$SEASON" ]; then
-            python scripts/fetch_team_pitching_action.py "$SEASON"
+            python fetch_team_pitching_action.py "$SEASON"
           else
-            python scripts/fetch_team_pitching_action.py
+            python fetch_team_pitching_action.py
           fi
 
       - name: Verify output

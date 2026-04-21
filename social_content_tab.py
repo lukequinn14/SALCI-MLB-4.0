@@ -23,7 +23,7 @@ Usage in mlb_salci_full.py
 How it works
 ------------
 1.  User clicks "Generate Content" button.
-2.  Tab calls build_content_prompt() → sends to claude-sonnet-4-20250514 via
+2.  Tab calls build_content_prompt() → sends to claude-sonnet-4-6 via
     the Anthropic API (key from st.secrets["ANTHROPIC_API_KEY"]).
 3.  Response is parsed by parse_content_response().
 4.  Falls back to local formatters if API call fails.
@@ -66,7 +66,7 @@ except ImportError as _e:
 
 def _call_claude(system_prompt: str, user_message: str, api_key: str) -> Optional[str]:
     """
-    Call claude-sonnet-4-20250514 synchronously via the REST API.
+    Call claude-sonnet-4-6 synchronously via the REST API.
     Returns the raw text content or None on error.
     """
     url = "https://api.anthropic.com/v1/messages"
@@ -76,7 +76,7 @@ def _call_claude(system_prompt: str, user_message: str, api_key: str) -> Optiona
         "anthropic-version": "2023-06-01",
     }
     body = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 2048,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],

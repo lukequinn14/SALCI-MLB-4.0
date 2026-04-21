@@ -54,9 +54,9 @@ jobs:
         run: |
           if [ -n "$DATE_OVERRIDE" ]; then
             echo "Running with date override: $DATE_OVERRIDE"
-            python scripts/generate_reflection.py "$DATE_OVERRIDE"
+            python generate_reflection.py "$DATE_OVERRIDE"
           else
-            python scripts/generate_reflection.py
+            python generate_reflection.py
           fi
 
       # ── 5. Verify ─────────────────────────────────────────────────────────
