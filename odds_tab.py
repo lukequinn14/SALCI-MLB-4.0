@@ -1169,15 +1169,24 @@ def render_odds_tab(
     # ── Fetch / build props ───────────────────────────────────────────────────
     with st.spinner("Fetching live sportsbook lines…"):
         if api_key:
-            # Configurable markets via secrets
+            # Configurable markets via secrets.
+            # Only prop markets are valid for the player props endpoint —
+            # game markets like "h2h" are silently ignored here.
+            _VALID_PROP_MARKETS = {
+                "pitcher_strikeouts", "batter_strikeouts", "batter_hits",
+                "batter_home_runs", "batter_rbis", "batter_total_bases",
+                "pitcher_hits_allowed", "pitcher_earned_runs", "pitcher_outs",
+            }
+            _DEFAULT_MARKETS = "pitcher_strikeouts,batter_hits,batter_home_runs,batter_total_bases"
             try:
-                markets = st.secrets.get("odds", {}).get(
-                    "markets",
-                    "pitcher_strikeouts,batter_hits,batter_home_runs,batter_total_bases",
-                )
-                regions = st.secrets.get("odds", {}).get("regions", "us")
+                raw_markets = st.secrets.get("odds", {}).get("markets", _DEFAULT_MARKETS)
+                regions     = st.secrets.get("odds", {}).get("regions", "us")
+                # Filter out any non-prop markets (e.g. "h2h") from secrets
+                valid = [m.strip() for m in raw_markets.split(",")
+                         if m.strip() in _VALID_PROP_MARKETS]
+                markets = ",".join(valid) if valid else _DEFAULT_MARKETS
             except Exception:
-                markets = "pitcher_strikeouts,batter_hits,batter_home_runs,batter_total_bases"
+                markets = _DEFAULT_MARKETS
                 regions = "us"
 
             events, quota_info = fetch_mlb_player_props(markets=markets, regions=regions)
