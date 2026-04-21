@@ -37,15 +37,15 @@ SECTION_H = 44
 FOOTER_H  = 56
 PAD       = 28
 
-LOGO_SZ   = 56        # logo square side length
+LOGO_SZ      = 60        # logo square side length
 
 # Horizontal column starts (1×)
-COL_LOGO   = PAD                   # 28
-COL_NAME   = PAD + LOGO_SZ + 16   # 100
-COL_EXP    = 530                   # big Ks number
-COL_GRADE  = 530                   # grade pill (below exp)
-COL_PILLS  = 730                   # 2×2 pill grid left edge
-COL_PILL2  = 870                   # second pill column
+COL_LOGO     = 20                          # logo left edge
+COL_NAME     = COL_LOGO + LOGO_SZ + 16    # 96 — name / matchup
+COL_GRADE    = 430                         # grade badge
+COL_EXP      = 510                         # big Ks number (right of grade)
+COL_PILLS    = 660                         # first K pill
+PILL_SPACING = 133                         # gap between pill left edges
 
 BRAND    = "SALCI"
 HANDLE   = "@SALCI"
@@ -355,10 +355,9 @@ def _draw_section(draw, theme, label, y, S):
 
 def _draw_row(draw, img, theme, pitcher, y, idx, S):
     """
-    Two-line pitcher row.
+    Single-height pitcher row. All elements vertically centred in ROW_H.
 
-    LINE 1: Logo | Name (bold)                    | Exp Ks big   | pill[0] pill[1]
-    LINE 2:        Team vs Opp (muted)             | Grade pill   | pill[2] pill[3]
+    [Logo] | [Name bold / Matchup muted] | [Grade badge] [Exp Ks K] | [p1] [p2] [p3] [p4]
     """
     row_bg = theme["row_even"] if idx % 2 == 0 else theme["row_odd"]
     draw.rectangle([0, y*S, CARD_W*S, (y+ROW_H)*S], fill=row_bg)
@@ -367,83 +366,78 @@ def _draw_row(draw, img, theme, pitcher, y, idx, S):
     opponent = pitcher.get("opponent", "")
     dark_bg  = theme["dark_bg"]
 
-    # ── Logo ────────────────────────────────────────────────────────────
-    logo_px  = LOGO_SZ * S
-    logo     = _fetch_logo(team, logo_px, dark_bg)
-    logo_y   = y*S + (ROW_H*S - logo_px) // 2
+    # ── Logo — vertically centred ────────────────────────────────────────
+    logo_px = LOGO_SZ * S
+    logo    = _fetch_logo(team, logo_px, dark_bg)
+    logo_y  = y*S + (ROW_H*S - logo_px) // 2
     img.paste(logo, (COL_LOGO*S, logo_y), logo)
 
-    # ── Line 1: Pitcher name ─────────────────────────────────────────────
+    # ── Name (top) + Matchup (bottom) — stacked in left column ──────────
     last_name  = pitcher.get("pitcher", "Unknown").split()[-1]
     hand       = pitcher.get("pitcher_hand", "R")
+    name_f     = _load_font(28*S, bold=True)
+    sub_f      = _load_font(18*S, bold=False)
     name_label = f"{last_name}  ({hand}HP)"
-    name_f     = _load_font(30*S, bold=True)
-    name_y     = y*S + 10*S
-    draw.text((COL_NAME*S, name_y), name_label,
-              fill=theme["text_primary"], font=name_f)
-
-    # ── Line 2: Team vs Opponent ─────────────────────────────────────────
     abbrev     = _resolve_abbrev(team) if team else ""
     opp_abbrev = _resolve_abbrev(opponent) if opponent else ""
     sub_label  = f"{abbrev}  vs  {opp_abbrev}"
-    sub_f      = _load_font(20*S, bold=False)
-    sub_y      = y*S + 52*S
-    draw.text((COL_NAME*S, sub_y), sub_label,
-              fill=theme["text_secondary"], font=sub_f)
 
-    # ── Expected Ks — line 1 (big number + "K" superscript) ─────────────
-    exp     = pitcher.get("expected", "--")
-    exp_str = str(exp)
-    exp_f   = _load_font(48*S, bold=True)
-    k_f     = _load_font(22*S, bold=False)
-    exp_x   = COL_EXP * S
-    exp_y   = y*S + 8*S
-    draw.text((exp_x, exp_y), exp_str, fill=theme["accent"], font=exp_f)
-    k_x = exp_x + _tw(draw, exp_str, exp_f) + 4*S
-    draw.text((k_x, exp_y + 6*S), "K", fill=theme["text_secondary"], font=k_f)
+    # Centre the two-line block vertically in the row
+    block_h = _th(draw, name_label, name_f) + 6*S + _th(draw, sub_label, sub_f)
+    text_top = y*S + (ROW_H*S - block_h) // 2
+    draw.text((COL_NAME*S, text_top), name_label,
+              fill=theme["text_primary"], font=name_f)
+    draw.text((COL_NAME*S, text_top + _th(draw, name_label, name_f) + 6*S),
+              sub_label, fill=theme["text_secondary"], font=sub_f)
 
-    # ── Grade pill — line 2 (below expected Ks) ──────────────────────────
+    # ── Grade badge — vertically centred ────────────────────────────────
     grade     = pitcher.get("salci_grade", "C")
     grade_lbl = GRADE_TEXT.get(grade.upper(), grade)
     grade_col = _grade_color(grade, theme)
-    gf        = _load_font(24*S, bold=True)
+    gf        = _load_font(22*S, bold=True)
     gw        = _tw(draw, grade_lbl, gf)
     gh        = _th(draw, grade_lbl, gf)
-    bw, bh    = gw + 20*S, gh + 10*S
+    bw, bh    = gw + 20*S, gh + 12*S
     bx        = COL_GRADE * S
-    by        = y*S + 54*S
+    by        = y*S + (ROW_H*S - bh) // 2
     draw.rounded_rectangle([bx, by, bx+bw, by+bh],
                             radius=6*S,
                             fill=_blend(grade_col, row_bg, 0.22),
                             outline=grade_col, width=2*S)
-    draw.text((bx + 10*S, by + 5*S), grade_lbl, fill=grade_col, font=gf)
+    draw.text((bx + 10*S, by + 6*S), grade_lbl, fill=grade_col, font=gf)
 
-    # ── K-line pills — 2×2 grid on the right ─────────────────────────────
+    # ── Expected Ks — big number + "K" label, vertically centred ────────
+    exp     = pitcher.get("expected", "--")
+    exp_str = str(exp)
+    exp_f   = _load_font(42*S, bold=True)
+    k_lbl_f = _load_font(20*S, bold=False)
+    exp_h   = _th(draw, exp_str, exp_f)
+    exp_x   = COL_EXP * S
+    exp_y   = y*S + (ROW_H*S - exp_h) // 2
+    draw.text((exp_x, exp_y), exp_str, fill=theme["accent"], font=exp_f)
+    # "K" sits at the top-right of the number
+    draw.text((exp_x + _tw(draw, exp_str, exp_f) + 3*S, exp_y + 4*S),
+              "K", fill=theme["text_secondary"], font=k_lbl_f)
+
+    # ── K-line pills — ALL 4 in a single horizontal row, sorted by K value
     k_lines = pitcher.get("k_lines", {}) or pitcher.get("lines", {}) or {}
     if k_lines:
-        items  = sorted(k_lines.items())[:4]
-        pill_f = _load_font(18*S, bold=True)
-
-        # Two columns, two rows
-        col_xs = [COL_PILLS*S, COL_PILL2*S]
-        row_ys = [y*S + 8*S, y*S + 52*S]
+        # Sort numerically by the K threshold (keys may be int or str)
+        items  = sorted(k_lines.items(), key=lambda x: int(x[0]))[:4]
+        pill_f = _load_font(17*S, bold=True)
 
         for i, (k_val, prob) in enumerate(items):
-            col_i  = i % 2
-            row_i  = i // 2
-            px     = col_xs[col_i]
-            py     = row_ys[row_i]
-
             pc = (34, 197, 94) if prob >= 65 else (234, 179, 8) if prob >= 45 else (239, 68, 68)
-
             pill_text = f"{k_val}+  {prob}%"
-            pw = _tw(draw, pill_text, pill_f) + 24*S
-            ph = _th(draw, pill_text, pill_f) + 10*S
+            pw = _tw(draw, pill_text, pill_f) + 22*S
+            ph = _th(draw, pill_text, pill_f) + 12*S
+            px = (COL_PILLS + i * PILL_SPACING) * S
+            py = y*S + (ROW_H*S - ph) // 2
             draw.rounded_rectangle([px, py, px+pw, py+ph],
                                     radius=5*S,
                                     fill=_blend(pc, row_bg, 0.18),
                                     outline=pc, width=max(1, S))
-            draw.text((px + 12*S, py + 5*S), pill_text, fill=pc, font=pill_f)
+            draw.text((px + 11*S, py + 6*S), pill_text, fill=pc, font=pill_f)
 
 
 def _draw_footer(draw, theme, total_h, S):
