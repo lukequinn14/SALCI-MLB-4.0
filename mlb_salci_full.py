@@ -1862,6 +1862,15 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
             )
 
         # ── Panel open — name is the very first thing inside ──────────────────
+        _prof_badge = (
+            "<span style='font-size:0.65rem;color:#a78bfa;background:#2d1b69;"
+            "padding:2px 7px;border-radius:4px;font-weight:600;'>"
+            + prof_clean + "</span>"
+        ) if prof_clean else ""
+        _floor_div = (
+            "<div style='font-size:0.68rem;color:#10b981;font-weight:600;margin-top:3px;'>Floor "
+            + str(floor) + " (" + str(floor_conf) + "% conf)</div>"
+        ) if floor is not None else ""
         st.markdown(
             f"<div style='background:#0a111e;padding:18px 16px 14px 16px;height:100%;'>"
 
@@ -1875,7 +1884,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
             f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:14px;'>"
             f"<span style='font-size:0.65rem;background:{badge_color};color:#fff;"
             f"padding:2px 7px;border-radius:4px;font-weight:600;letter-spacing:0.4px;'>{badge_txt}</span>"
-            f"{'<span style=\"font-size:0.65rem;color:#a78bfa;background:#2d1b69;padding:2px 7px;border-radius:4px;font-weight:600;\">' + prof_clean + '</span>' if prof_clean else ''}"
+            f"{_prof_badge}"
             f"</div>"
 
             # Row 3: SALCI score block
@@ -1890,7 +1899,7 @@ def render_matchup_card(game: Dict, pitcher_results: List[Dict], lineup_status: 
             f"  <div style='border-left:1px solid #1e293b;padding-left:12px;'>"
             f"    <div style='font-size:0.58rem;color:#475569;font-weight:600;letter-spacing:1px;margin-bottom:3px;'>EXP. K's</div>"
             f"    <div style='font-size:1.5rem;font-weight:800;color:#cbd5e1;line-height:1;'>{exp}</div>"
-            f"    {'<div style=\"font-size:0.68rem;color:#10b981;font-weight:600;margin-top:3px;\">Floor ' + str(floor) + ' (' + str(floor_conf) + '% conf)</div>' if floor is not None else ''}"
+            f"    {_floor_div}"
             f"  </div>"
             f"</div>",
             unsafe_allow_html=True,
