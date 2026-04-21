@@ -1287,46 +1287,6 @@ def create_expected_vs_salci_chart(pitchers: List[Dict]):
     return fig
 
 
-def create_top_10_expected_ks_chart(pitchers: List[Dict]):
-    """Top 10 Expected Strikeouts horizontal bar"""
-    if not pitchers:
-        return None
-    
-    df = pd.DataFrame([
-        {
-            "Pitcher": p.get("pitcher", "Unknown"),
-            "Expected Ks": p.get("expected", 0),
-            "At Least": f"{p.get('floor', 0)}+ Ks",
-            "Confidence": p.get("floor_confidence", 0)
-        }
-        for p in pitchers
-    ])
-    
-    df = df.nlargest(10, "Expected Ks")
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        y=df["Pitcher"],
-        x=df["Expected Ks"],
-        text=df["At Least"] + " (" + df["Confidence"].astype(str) + "%)",
-        textposition="inside",
-        orientation="h",
-        marker=dict(color="#10b981", opacity=0.85)
-    ))
-    
-    fig.update_layout(
-        title="Top 10 Projected Strikeouts (with At Least confidence)",
-        xaxis_title="Expected Strikeouts",
-        height=500,
-        template="plotly_dark",
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        yaxis=dict(autorange="reversed")
-    )
-    return fig
-
-
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
@@ -1356,14 +1316,13 @@ def create_top_10_expected_ks_chart(pitchers: List[Dict]):
     df = pd.DataFrame([{
         "Pitcher": p.get("pitcher", "Unknown"),
         "Expected Ks": p.get("expected", 0),
-        "At Least": f"{p.get('floor', 0)}+ Ks",
         "Confidence": p.get("floor_confidence", 0)
     } for p in pitchers])
     df = df.nlargest(10, "Expected Ks")
-    
+
     fig = go.Figure(go.Bar(
         y=df["Pitcher"], x=df["Expected Ks"],
-        text=df["At Least"] + " (" + df["Confidence"].astype(str) + "%)",
+        text=df["Confidence"].astype(str) + "% conf",
         textposition="inside", orientation="h",
         marker=dict(color="#10b981", opacity=0.85)
     ))

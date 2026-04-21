@@ -157,9 +157,10 @@ def build_base(target_date: Optional[str] = None) -> bool:
     pitchers = []
 
     for game in games:
-        game_pk  = game.get("gamePk")
-        home_t   = game["teams"]["home"]["team"]
-        away_t   = game["teams"]["away"]["team"]
+        game_pk       = game.get("gamePk")
+        game_datetime = game.get("gameDate")
+        home_t        = game["teams"]["home"]["team"]
+        away_t        = game["teams"]["away"]["team"]
 
         for side, team, opp_team in [("home", home_t, away_t), ("away", away_t, home_t)]:
             pp = game["teams"][side].get("probablePitcher")
@@ -170,6 +171,7 @@ def build_base(target_date: Optional[str] = None) -> bool:
             pitcher_name = pp.get("fullName", "Unknown")
             pitcher_hand = pp.get("pitchHand", {}).get("code", "R")
             opp_id       = opp_team["id"]
+            team_id      = team["id"]
             opp_side     = "away" if side == "home" else "home"
 
             print(f"  ── {pitcher_name} ({team['name']})")
@@ -246,10 +248,12 @@ def build_base(target_date: Optional[str] = None) -> bool:
                 "pitcher_k_pct":  p_recent.get("K_percent", 0.22),
                 "pitcher_avg_against": p_recent.get("avg_against", LEAGUE_AVG_2025),
                 "team":           team["name"],
+                "team_id":        team_id,
                 "opponent":       opp_team["name"],
                 "opponent_id":    opp_id,
                 "opp_side":       opp_side,
                 "game_pk":        game_pk,
+                "game_datetime":  game_datetime,
                 "salci":          salci,
                 "salci_grade":    grade,
                 "expected":       expected,
