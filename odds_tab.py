@@ -43,6 +43,65 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 import streamlit as st
+import os
+
+try:
+    import pytz as _pytz
+    _PYTZ_OK = True
+except ImportError:
+    _PYTZ_OK = False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BALLDONTLIE INTEGRATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_balldontlie_games(date_str: str) -> list:
+    """Fetch today's MLB games from BallDontLie API."""
+    api_key = (
+        st.secrets.get("BALLDONTLIE_API_KEY") or
+        os.environ.get("BALLDONTLIE_API_KEY", "")
+    )
+    if not api_key:
+        return []
+    try:
+        url = "https://api.balldontlie.io/mlb/v1/games"
+        headers = {"Authorization": api_key}
+        params = {"dates[]": date_str, "per_page": 30}
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        if r.status_code == 200:
+            return r.json().get("data", [])
+        return []
+    except Exception:
+        return []
+
+
+def fetch_apisports_odds(date_str: str) -> list:
+    """Fetch MLB odds from API-Sports as fallback when The Odds API is unavailable."""
+    api_key = (
+        st.secrets.get("APISPORTS_KEY") or
+        os.environ.get("APISPORTS_KEY", "")
+    )
+    if not api_key:
+        return []
+    try:
+        url = "https://v1.baseball.api-sports.io/odds"
+        headers = {
+            "x-apisports-key": api_key,
+            "x-rapidapi-host": "v1.baseball.api-sports.io",
+        }
+        params = {
+            "league":    "1",
+            "season":    "2026",
+            "date":      date_str,
+            "bookmaker": "5",
+        }
+        r = requests.get(url, headers=headers, params=params, timeout=12)
+        if r.status_code == 200:
+            return r.json().get("response", [])
+        return []
+    except Exception:
+        return []
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS & CONFIG
@@ -246,7 +305,7 @@ def _get_api_key() -> Optional[str]:
     return os.environ.get("ODDS_API_KEY") or None
 
 
-@st.cache_data(ttl=300)   # 5-min cache — conserves quota
+@st.cache_data(ttl=3600)  # 1-hour cache — conserves free-tier quota
 def fetch_mlb_player_props(
     markets: str = "pitcher_strikeouts,batter_hits,batter_home_runs,batter_total_bases",
     regions: str = "us",
@@ -280,7 +339,7 @@ def fetch_mlb_player_props(
     quota_info: Dict = {}
 
     # Step 2: pull props per event (batch by event to stay within quota)
-    for ev in events_meta[:15]:   # cap at 15 games to preserve quota
+    for ev in events_meta[:10]:   # cap at 10 games — max 11 requests per refresh
         event_id = ev.get("id")
         if not event_id:
             continue
@@ -865,7 +924,8 @@ def _render_header() -> None:
     )
 
 
-def _render_api_status(quota: Optional[Dict], prop_count: int) -> None:
+def _render_api_status(quota: Optional[Dict], prop_count: int,
+                       apisports_status: str = "") -> None:
     if quota is None:
         # Debug: show what keys ARE present in secrets so user can diagnose
         debug_info = ""
@@ -894,11 +954,18 @@ def _render_api_status(quota: Optional[Dict], prop_count: int) -> None:
 
     rem  = quota.get("remaining", "?")
     used = quota.get("used", "?")
+    fetched_at = datetime.utcnow().strftime("%H:%M UTC")
+    as_pill = (
+        f'&nbsp;<span class="quota-pill">📡 API-Sports: {apisports_status}</span>'
+        if apisports_status else ""
+    )
     st.markdown(
         f'<div class="api-banner ok odds-root">'
         f'✅ <strong>The Odds API — Live</strong> &nbsp;|&nbsp; '
         f'{prop_count} props loaded &nbsp;'
+        f'<span class="quota-pill">Fetched: {fetched_at}</span> &nbsp;'
         f'<span class="quota-pill">Quota: {used} used / {rem} remaining</span>'
+        f'{as_pill}'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -1049,17 +1116,55 @@ def render_odds_tab(
     st.markdown(_CSS, unsafe_allow_html=True)
     _render_header()
 
+    # ── Live Scores sidebar widget ────────────────────────────────────────────
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    bdl_games = fetch_balldontlie_games(today_str)
+    if bdl_games:
+        with st.sidebar.expander("📡 Live Scores", expanded=True):
+            for g in bdl_games:
+                home   = g.get("home_team", {}).get("abbreviation", "HOM")
+                away   = g.get("visitor_team", {}).get("abbreviation", "AWY")
+                hs     = g.get("home_team_score")
+                vs     = g.get("visitor_team_score")
+                status = g.get("status", "")
+                inning = g.get("inning") or g.get("time", "")
+                if hs is not None and vs is not None and status not in ("", "Scheduled"):
+                    label = f"{away} {vs} – {home} {hs}"
+                    if inning:
+                        label += f"  ({inning})"
+                else:
+                    raw_dt = g.get("date", "")
+                    if raw_dt and _PYTZ_OK:
+                        try:
+                            import pytz as _tz
+                            dt    = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
+                            label = f"{away} vs {home}  " + dt.astimezone(
+                                _tz.timezone("America/New_York")
+                            ).strftime("%-I:%M %p ET")
+                        except Exception:
+                            label = f"{away} vs {home}"
+                    else:
+                        label = f"{away} vs {home}"
+                st.caption(label)
+
     api_key  = _get_api_key()
     all_props: List[Dict] = []
     quota_info: Optional[Dict] = None
+    apisports_status: str = ""
 
     # ── Tabs inside the Odds tab ──────────────────────────────────────────────
-    inner_tab1, inner_tab2, inner_tab3, inner_tab4 = st.tabs([
+    inner_tab1, inner_tab2, inner_tab3, inner_tab4, inner_tab5 = st.tabs([
         "📊 Props Table",
         "🏆 Top Plays",
         "📋 Full Report",
         "📣 Social Posts",
+        "🎰 Parlay Builder",
     ])
+
+    # ── Refresh button — only way to trigger a fresh API call ────────────────
+    if st.button("🔄 Refresh Odds", help="Clears cache and fetches fresh lines (costs API quota)"):
+        st.cache_data.clear()
+        st.rerun()
 
     # ── Fetch / build props ───────────────────────────────────────────────────
     with st.spinner("Fetching live sportsbook lines…"):
@@ -1081,8 +1186,26 @@ def render_odds_tab(
                 for ev in events:
                     raw_props.extend(extract_props_from_event(ev))
                 all_props = deduplicate_props(raw_props)
+
+            # ── API-Sports fallback (only when Odds API returned nothing) ──
+            if not all_props:
+                as_date = datetime.utcnow().strftime("%Y-%m-%d")
+                as_data = fetch_apisports_odds(as_date)
+                if as_data:
+                    apisports_status = "Connected"
+                elif os.environ.get("APISPORTS_KEY") or (
+                    st.secrets.get("APISPORTS_KEY") if hasattr(st, "secrets") else None
+                ):
+                    apisports_status = "Unavailable"
         else:
             quota_info = None
+            # No Odds API key — try API-Sports as sole source
+            as_date = datetime.utcnow().strftime("%Y-%m-%d")
+            as_data = fetch_apisports_odds(as_date)
+            if as_data:
+                apisports_status = "Connected"
+            elif os.environ.get("APISPORTS_KEY"):
+                apisports_status = "Unavailable"
 
     # Add any manually entered props
     manual = st.session_state.get("manual_props", [])
@@ -1093,9 +1216,9 @@ def render_odds_tab(
         all_props = enrich_props_with_salci(all_props, pitchers_data)
 
     # API status banner (shown on all sub-tabs)
-    for tab in (inner_tab1, inner_tab2, inner_tab3, inner_tab4):
+    for tab in (inner_tab1, inner_tab2, inner_tab3, inner_tab4, inner_tab5):
         with tab:
-            _render_api_status(quota_info, len(all_props))
+            _render_api_status(quota_info, len(all_props), apisports_status)
 
     # Apply sidebar filters
     filtered = _render_market_filter(all_props) if all_props else []
@@ -1186,6 +1309,121 @@ def render_odds_tab(
             "⚠️ **Disclaimer:** SALCI projections are probabilistic models, "
             "not guarantees. Edge calculations are estimates. Bet responsibly."
         )
+
+    # ── TAB 5: Parlay Builder ─────────────────────────────────────────────────
+    with inner_tab5:
+        st.markdown('<p class="odds-section-hdr">Parlay Builder</p>',
+                    unsafe_allow_html=True)
+        st.caption(
+            "Legs are sourced from pitcher strikeout props where SALCI floor "
+            "exceeds the book line. Only non-synthetic projections are shown."
+        )
+
+        # Filter to pitcher K props with real SALCI projections
+        k_props = [
+            p for p in all_props
+            if ("strikeout" in p.get("prop_key", "").lower()
+                or "pitcher" in p.get("prop_key", "").lower())
+            and not p.get("_synthetic")
+        ]
+
+        high_conf = sorted(
+            [p for p in k_props if p.get("floor", 0) - p.get("line", 0) >= 2],
+            key=lambda x: x.get("floor", 0) - x.get("line", 0),
+            reverse=True,
+        )
+        value_legs = sorted(
+            [p for p in k_props
+             if 1 <= p.get("floor", 0) - p.get("line", 0) < 2],
+            key=lambda x: x.get("floor", 0) - x.get("line", 0),
+            reverse=True,
+        )
+
+        if not k_props:
+            st.info(
+                "No eligible parlay legs found. "
+                "Legs appear once pitcher K props with SALCI projections are loaded."
+            )
+        else:
+            col_hc, col_val = st.columns(2)
+
+            selected_legs: List[Dict] = []
+
+            def _leg_card(col, prop: Dict, leg_key: str) -> bool:
+                gap = round(prop.get("floor", 0) - prop.get("line", 0), 1)
+                last = prop.get("player", "Unknown").split()[-1]
+                label = (
+                    f"{last} O{prop['line']} Ks  "
+                    f"Floor {prop['floor']}  Gap +{gap}"
+                )
+                with col:
+                    checked = st.checkbox(label, key=leg_key)
+                    st.caption(
+                        f"Implied: {prop['implied_over']}%  ·  "
+                        f"Model: {prop['model_prob']}%  ·  "
+                        f"Book: {_fmt_odds(prop['odds_over'])}"
+                    )
+                return checked
+
+            with col_hc:
+                st.markdown("**⚡ High Confidence Legs (Floor − Line ≥ 2)**")
+                if not high_conf:
+                    st.caption("None today.")
+                for i, p in enumerate(high_conf):
+                    if _leg_card(col_hc, p, f"parlay_hc_{i}"):
+                        selected_legs.append(p)
+
+            with col_val:
+                st.markdown("**💪 Value Legs (Floor − Line ≥ 1)**")
+                if not value_legs:
+                    st.caption("None today.")
+                for i, p in enumerate(value_legs):
+                    if _leg_card(col_val, p, f"parlay_val_{i}"):
+                        selected_legs.append(p)
+
+            st.markdown("---")
+            st.markdown("#### 🧮 Build Parlay")
+
+            if not selected_legs:
+                st.info("Check legs above to build your parlay.")
+            else:
+                # Combined implied probability (model probs, as decimals)
+                combined_prob = 1.0
+                for leg in selected_legs:
+                    combined_prob *= leg["model_prob"] / 100.0
+
+                # Convert combined probability to American odds
+                if combined_prob >= 0.5:
+                    combined_american = -round((combined_prob / (1 - combined_prob)) * 100)
+                else:
+                    combined_american = round(((1 / combined_prob) - 1) * 100)
+
+                c_prob, c_odds = st.columns(2)
+                with c_prob:
+                    st.metric("Model Confidence", f"{combined_prob * 100:.1f}%")
+                with c_odds:
+                    st.metric("Suggested Parlay Odds", _fmt_odds(combined_american))
+
+                # Build copyable parlay text
+                leg_lines = "\n".join(
+                    f"  ✅ {p.get('player','').split()[-1]} "
+                    f"OVER {p['line']} Ks  "
+                    f"(Floor: {p['floor']}, Gap: +{round(p.get('floor',0)-p.get('line',0),1)})"
+                    for p in selected_legs
+                )
+                parlay_text = (
+                    f"SALCI PARLAY 🔥\n"
+                    f"{leg_lines}\n"
+                    f"Combined: ~{_fmt_odds(combined_american)} odds"
+                    f" | {combined_prob*100:.0f}% model confidence\n"
+                    f"#SALCI #MLB"
+                )
+
+                st.code(parlay_text, language="")
+                st.caption(
+                    "⚠️ Disclaimer: SALCI projections are probabilistic estimates, "
+                    "not guarantees. Bet responsibly."
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
