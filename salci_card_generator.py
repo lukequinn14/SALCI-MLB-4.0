@@ -22,10 +22,10 @@ import pytz
 # ─────────────────────────────────────────────────────────────────────────────
 
 CARD_W   = 1200
-HEADER_H = 90
-ROW_H    = 72
-SECTION_H= 36
-FOOTER_H = 56
+HEADER_H = 100
+ROW_H    = 80
+SECTION_H= 48
+FOOTER_H = 70
 PAD      = 28
 
 # Column x-positions inside each row
@@ -222,27 +222,51 @@ def _circle_placeholder(abbrev: str, size: tuple) -> Image.Image:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FONT HELPER
+# FONT HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _font(size: int = 16) -> ImageFont.FreeTypeFont:
-    """TrueType font at requested size. Tries system paths before PIL default."""
-    for path in [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    """Load best available system TrueType font at given size."""
+    mac_regular = [
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/SF-Pro-Display-Regular.otf",
+        "/System/Library/Fonts/SFNSText.ttf",
+    ]
+    mac_bold = [
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+    ]
+    linux_regular = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/SFNSText.ttf",
-    ]:
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
+    linux_bold = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    ]
+
+    candidates = (mac_bold if bold else mac_regular) + (linux_bold if bold else linux_regular)
+
+    for path in candidates:
         try:
             return ImageFont.truetype(path, size)
         except (IOError, OSError):
             continue
+
     try:
         return ImageFont.load_default(size=size)
     except TypeError:
         return ImageFont.load_default()
+
+
+# Keep _font() as a thin alias used by _circle_placeholder
+def _font(size: int = 16) -> ImageFont.FreeTypeFont:
+    return _load_font(size, bold=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -299,20 +323,20 @@ def split_by_gametime(pitchers: list) -> tuple:
 def _draw_header(draw, img, theme, date_str, card_type):
     """Brand left · title centre · date+handle right · divider."""
     # Left — brand
-    bf = _font(30)
-    draw.text((PAD, 22), BRAND, fill=theme["accent"], font=bf)
+    bf = _load_font(42, bold=True)
+    draw.text((PAD, 20), BRAND, fill=theme["accent"], font=bf)
 
     # Centre — card type
-    tf = _font(20)
+    tf = _load_font(28, bold=False)
     w  = _tw(draw, card_type, tf)
     draw.text(((CARD_W - w) // 2, 28), card_type,
               fill=theme["text_primary"], font=tf)
 
     # Right — date + handle
-    mf   = _font(14)
+    mf   = _load_font(22, bold=False)
     meta = f"{date_str}  {HANDLE}"
     mw   = _tw(draw, meta, mf)
-    draw.text((CARD_W - mw - PAD, 32), meta,
+    draw.text((CARD_W - mw - PAD, 34), meta,
               fill=theme["text_muted"], font=mf)
 
     # Divider
@@ -323,7 +347,7 @@ def _draw_header(draw, img, theme, date_str, card_type):
 def _draw_section(draw, theme, label, y):
     """Thin section-header strip. Returns SECTION_H."""
     draw.rectangle([0, y, CARD_W, y + SECTION_H], fill=theme["section_bg"])
-    f = _font(13)
+    f = _load_font(18, bold=True)
     draw.text((PAD, y + (SECTION_H - _th(draw, label, f)) // 2),
               label, fill=theme["text_secondary"], font=f)
     return SECTION_H
@@ -352,13 +376,13 @@ def _draw_row(draw, img, theme, pitcher, y, idx):
     opponent  = pitcher.get("opponent", "")
     abbrev    = _resolve_abbrev(team) if team else ""
 
-    name_f = _font(20)
-    sub_f  = _font(13)
+    name_f = _load_font(28, bold=True)
+    sub_f  = _load_font(20, bold=False)
     name_label = f"{last_name}  ({hand}HP)"
     sub_label  = f"{abbrev}  vs  {_resolve_abbrev(opponent) if opponent else opponent}"
 
     name_y = y + (ROW_H // 2) - _th(draw, name_label, name_f) - 2
-    sub_y  = y + (ROW_H // 2) + 3
+    sub_y  = y + (ROW_H // 2) + 4
 
     draw.text((COL_NAME, name_y), name_label,
               fill=theme["text_primary"], font=name_f)
@@ -369,21 +393,21 @@ def _draw_row(draw, img, theme, pitcher, y, idx):
     grade      = pitcher.get("salci_grade", "C")
     grade_lbl  = GRADE_TEXT.get(grade.upper(), grade)
     grade_col  = _grade_color(grade, theme)
-    gf         = _font(15)
+    gf         = _load_font(22, bold=True)
     gw         = _tw(draw, grade_lbl, gf)
     gh         = _th(draw, grade_lbl, gf)
-    bw, bh     = gw + 20, gh + 10
+    bw, bh     = gw + 24, gh + 12
     bx         = COL_GRADE
     by         = y + (ROW_H - bh) // 2
     badge_bg   = _blend(grade_col, row_bg, 0.20)
     draw.rounded_rectangle([bx, by, bx + bw, by + bh],
-                            radius=5, fill=badge_bg, outline=grade_col, width=2)
-    draw.text((bx + 10, by + 5), grade_lbl, fill=grade_col, font=gf)
+                            radius=6, fill=badge_bg, outline=grade_col, width=2)
+    draw.text((bx + 12, by + 6), grade_lbl, fill=grade_col, font=gf)
 
     # ── Expected Ks ───────────────────────────────────────────────────────
     exp     = pitcher.get("expected", "--")
-    exp_f   = _font(26)
-    lbl_f   = _font(12)
+    exp_f   = _load_font(38, bold=True)
+    lbl_f   = _load_font(20, bold=False)
     exp_str = str(exp)
     ey      = y + (ROW_H - _th(draw, exp_str, exp_f)) // 2
     draw.text((COL_EXP, ey), exp_str, fill=theme["accent"], font=exp_f)
@@ -391,12 +415,12 @@ def _draw_row(draw, img, theme, pitcher, y, idx):
                ey + _th(draw, exp_str, exp_f) - _th(draw, "K", lbl_f) - 2),
               "K", fill=theme["text_secondary"], font=lbl_f)
 
-    # ── K% pills — top 3 by K threshold value (ascending) ────────────────
+    # ── K% pills — sorted by K threshold ascending ────────────────────────
     k_lines = pitcher.get("k_lines", {}) or pitcher.get("lines", {}) or {}
     if k_lines:
         items   = sorted(k_lines.items())[:4]
         pill_x  = COL_PILLS
-        pill_f  = _font(13)
+        pill_f  = _load_font(16, bold=True)
         for k_val, prob in items:
             if prob >= 70:
                 pc = (34, 197, 94)
@@ -405,15 +429,15 @@ def _draw_row(draw, img, theme, pitcher, y, idx):
             else:
                 pc = (239, 68, 68)
             pill_text = f"{k_val}+  {prob}%"
-            pw = _tw(draw, pill_text, pill_f) + 16
-            ph = _th(draw, pill_text, pill_f) + 8
+            pw = _tw(draw, pill_text, pill_f) + 24   # +8px each side (Change 4)
+            ph = _th(draw, pill_text, pill_f) + 12
             py = y + (ROW_H - ph) // 2
             draw.rounded_rectangle([pill_x, py, pill_x + pw, py + ph],
-                                    radius=4,
+                                    radius=5,
                                     fill=_blend(pc, row_bg, 0.18),
                                     outline=pc, width=1)
-            draw.text((pill_x + 8, py + 4), pill_text, fill=pc, font=pill_f)
-            pill_x += pw + 8
+            draw.text((pill_x + 12, py + 6), pill_text, fill=pc, font=pill_f)
+            pill_x += pw + 10
 
     return ROW_H
 
@@ -422,13 +446,13 @@ def _draw_footer(draw, theme, total_h):
     fy = total_h - FOOTER_H
     draw.line([(PAD, fy + 2), (CARD_W - PAD, fy + 2)],
               fill=theme["divider"], width=1)
-    hf = _font(15)
+    hf = _load_font(18, bold=False)
     hw = _tw(draw, HASHTAGS, hf)
-    draw.text(((CARD_W - hw) // 2, fy + 14), HASHTAGS,
+    draw.text(((CARD_W - hw) // 2, fy + 16), HASHTAGS,
               fill=theme["text_secondary"], font=hf)
-    wf = _font(12)
+    wf = _load_font(16, bold=False)
     ww = _tw(draw, BRAND, wf)
-    draw.text((CARD_W - ww - PAD, fy + 36), BRAND,
+    draw.text((CARD_W - ww - PAD, fy + 44), BRAND,
               fill=theme["text_muted"], font=wf)
 
 
