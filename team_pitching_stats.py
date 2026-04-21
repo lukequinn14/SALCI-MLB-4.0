@@ -440,6 +440,27 @@ def _aggregate_to_stat(t: dict) -> Optional[dict]:
 #   Manually aggregated by team in Python.
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _build_player_team_map(season: int) -> Dict[int, str]:
+    """
+    Return {mlbam_player_id: team_abbrev} for all active players this season.
+    Uses the MLB Stats API bulk players endpoint — one call, no rate limits.
+    """
+    url  = f"{_BASE}/sports/1/players?season={season}"
+    data = _get(url)
+    if not data:
+        return {}
+    result: Dict[int, str] = {}
+    for person in data.get("people", []):
+        pid     = person.get("id")
+        team_id = person.get("currentTeam", {}).get("id")
+        if pid and team_id:
+            abbrev = _SAVANT_TEAM_ID_TO_ABBREV.get(team_id, "")
+            if abbrev:
+                result[pid] = abbrev
+    print(f"[player_team_map] Built map for {len(result)} players")
+    return result
+
+
 _SAVANT_TIMEOUT = 25
 _SAVANT_HEADERS = {
     "User-Agent": (
@@ -473,6 +494,7 @@ def _find_team_col(df) -> Optional[str]:
 
     # Priority-ordered candidates — all lowercase normalised names
     candidates = [
+        "player_team",
         "team_name",
         "team_name_alt",
         "team_abbrev",
@@ -531,44 +553,35 @@ def _fetch_savant_leaderboard(season: int) -> Optional["pd.DataFrame"]:
 
 def _fetch_savant_statcast_season_csv(season: int) -> Optional["pd.DataFrame"]:
     """
-    Strategy 2: Savant statcast_search, pitcher-level rows for full season.
-
-    [FIX-5] Removed invalid "&group_by=team" parameter. Savant's statcast_search
-    does not support team-level grouping in this endpoint — it returns pitcher rows.
-    We aggregate by team_id ourselves in _aggregate_savant_df().
-
-    Uses "&group_by=name_auto" to get one row per pitcher (includes team_id).
+    Strategy 2: Savant leaderboard with min=0, early-season fallback.
+    Identical shape to Strategy 1 but with no minimum PA filter so it
+    returns data even in the first weeks of the season.
     """
     try:
         import pandas as pd
     except ImportError:
         return None
 
-    season_start = f"{season}-03-20"
-    today        = date.today().strftime("%Y-%m-%d")
-
     url = (
-        "https://baseballsavant.mlb.com/statcast_search/csv"
-        f"?all=true&hfGT=R%7C&hfSea={season}%7C"
-        f"&game_date_gt={season_start}&game_date_lt={today}"
-        "&player_type=pitcher&min_results=0&min_pas=0"
-        "&group_by=name_auto"          # ← pitcher-level rows; includes team_id
-        "&sort_col=pitches&sort_order=desc"
-        "&type=details"
+        "https://baseballsavant.mlb.com/leaderboard/custom"
+        f"?year={season}&type=pitcher&filter=&min=0"
+        "&selections=xfip,hard_hit_percent,whiff_percent,"
+        "k_percent,bb_percent,barrel_batted_rate,p_era"
+        "&chart=false&csv=true"
     )
     try:
         resp = requests.get(url, timeout=_SAVANT_TIMEOUT, headers=_SAVANT_HEADERS)
         resp.raise_for_status()
         text = resp.text.strip()
         if not text or len(text) < 100:
-            print("[Savant statcast_search/season] Response too short — skipping")
+            print("[Savant leaderboard/min0] Response too short — skipping")
             return None
         df = pd.read_csv(io.StringIO(text), low_memory=False)
-        print(f"[Savant statcast_search/season] Fetched {len(df)} rows, "
+        print(f"[Savant leaderboard/min0] Fetched {len(df)} rows, "
               f"columns: {list(df.columns)[:10]}")
         return df if not df.empty else None
     except Exception as e:
-        print(f"[Savant statcast_search/season] {e}")
+        print(f"[Savant leaderboard/min0] {e}")
         return None
 
 
@@ -735,20 +748,42 @@ def _aggregate_savant_df(df, season: int) -> Dict[str, dict]:
     return result
 
 
+def _inject_team_col(df, player_team_map: Dict[int, str]):
+    """
+    Add a 'team' column to a Savant leaderboard DataFrame using
+    player_id → team_abbrev mapping built from the MLB API.
+    Modifies df in place and returns it.
+    """
+    if df is None or "player_id" not in df.columns:
+        return df
+    df["team"] = df["player_id"].map(
+        lambda pid: player_team_map.get(int(pid), "") if pid and str(pid) != "nan" else ""
+    )
+    mapped = df["team"].ne("").sum()
+    print(f"[inject_team] Mapped {mapped}/{len(df)} rows to a team")
+    return df
+
+
 def _fetch_savant_team_pitching(season: int) -> Dict[str, dict]:
     """
     Master function: try three strategies in order, return best coverage.
 
     Strategy 1 — Savant pitcher leaderboard (min=1):
         Best data quality; works from ~May onward.
-    Strategy 2 — statcast_search full-season pitcher rows:
-        Works early season; no min IP; aggregated by team_id in Python.
+    Strategy 2 — Savant leaderboard (min=0):
+        Works early season; no minimum PA filter.
     Strategy 3 — statcast_search rolling 30-day pitcher rows:
         Smallest payload; most reliable connection; last resort.
+
+    Team column is injected via MLB API player lookup (player_id → team)
+    because Savant's player_team CSV column is always null.
     """
+    player_team_map = _build_player_team_map(season)
+
     # Strategy 1
     print("[Savant] Trying Strategy 1: pitcher leaderboard (min=1)…")
     df1     = _fetch_savant_leaderboard(season)
+    df1     = _inject_team_col(df1, player_team_map)
     result  = _aggregate_savant_df(df1, season)
     if len(result) >= 25:
         print(f"[Savant] ✅ Strategy 1 succeeded: {len(result)} teams")
@@ -756,8 +791,9 @@ def _fetch_savant_team_pitching(season: int) -> Dict[str, dict]:
 
     # Strategy 2
     print(f"[Savant] Strategy 1 partial ({len(result)} teams). "
-          "Trying Strategy 2: statcast_search/season…")
+          "Trying Strategy 2: leaderboard/min0…")
     df2     = _fetch_savant_statcast_season_csv(season)
+    df2     = _inject_team_col(df2, player_team_map)
     result2 = _aggregate_savant_df(df2, season)
     if len(result2) >= 25:
         print(f"[Savant] ✅ Strategy 2 succeeded: {len(result2)} teams")
