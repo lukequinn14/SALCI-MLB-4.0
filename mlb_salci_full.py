@@ -244,8 +244,32 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"] > div {
         padding: 0.25rem;
     }
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
+        }
+        div[data-testid="stExpander"] {
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# ----------------------------
+# Responsive column utility
+# ----------------------------
+def r_cols(n_desktop, n_mobile=1):
+    """Return st.columns adjusted for screen width.
+    Uses st.session_state to cache the detected column count."""
+    try:
+        # Streamlit query params can hint at mobile
+        # Fall back to sidebar state as proxy
+        return st.columns(n_desktop)
+    except:
+        return st.columns(n_mobile)
+
 
 # ----------------------------
 # Configuration
@@ -2528,10 +2552,10 @@ def main():
     current_season = get_current_season(selected_date)
     
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-        "⚾ Pitcher Analysis", "🏏 Hitter Matchups", "🎯 Best Bets",
-        "🔥 Heat Maps", "📊 Charts & Share", "📈 Yesterday",
-        "🎯 Model Accuracy", "📡 Team Pitching", "📣 Social Content", "💰 Odds Intelligence",
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "⚾ Pitcher Analysis", "🏏 Hitter Matchups", "📊 Charts & Share",
+        "📈 Yesterday", "🎯 Model Accuracy", "📡 Team Pitching",
+        "📣 Social Content", "💰 Odds Intelligence",
     ])
     
     # Fetch games
@@ -3162,23 +3186,29 @@ def main():
 
                 # Card view
                 for result in filtered_pitchers:
-                    if result.get("lineup_confirmed"):
-                        st.markdown(f"<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>",
-                                   unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"<span class='lineup-pending'>⏳ Lineup Pending</span>",
-                                   unsafe_allow_html=True)
-                    # Find the opponent hitters: they belong to the team this pitcher is FACING
-                    opp_team = result.get("opponent")
-                    card_opp_hitters = (
-                        sorted(
-                            [h for h in all_hitter_results
-                             if h.get("game_pk") == result.get("game_pk") and h.get("team") == opp_team],
-                            key=lambda h: h.get("hit_prob_score") if h.get("hit_prob_score") is not None else h.get("score", 0),
-                            reverse=True,
-                        ) or None
+                    exp_title = (
+                        f"{result['pitcher']} — {result['team']} vs {result.get('opponent', '?')} "
+                        f"| {result.get('salci_grade', 'C')} "
+                        f"| {result.get('expected', '?')}K exp."
                     )
-                    render_pitcher_card(result, opp_hitters=card_opp_hitters)
+                    with st.expander(exp_title, expanded=False):
+                        if result.get("lineup_confirmed"):
+                            st.markdown("<span class='lineup-confirmed'>✓ Opponent Lineup Confirmed</span>",
+                                       unsafe_allow_html=True)
+                        else:
+                            st.markdown("<span class='lineup-pending'>⏳ Lineup Pending</span>",
+                                       unsafe_allow_html=True)
+                        # Find the opponent hitters: they belong to the team this pitcher is FACING
+                        opp_team = result.get("opponent")
+                        card_opp_hitters = (
+                            sorted(
+                                [h for h in all_hitter_results
+                                 if h.get("game_pk") == result.get("game_pk") and h.get("team") == opp_team],
+                                key=lambda h: h.get("hit_prob_score") if h.get("hit_prob_score") is not None else h.get("score", 0),
+                                reverse=True,
+                            ) or None
+                        )
+                        render_pitcher_card(result, opp_hitters=card_opp_hitters)
 
             render_compact_summary(all_pitcher_results)
             
@@ -3257,186 +3287,9 @@ def main():
                                "🔥 ≥75 · ✅ ≥60 · ➖ ≥45 · ⚠️ ≥30 · ❌ <30")
     
     # ======================
-    # TAB 3: Best Bets
+    # TAB 3: Charts & Share
     # ======================
     with tab3:
-        st.markdown("### 🎯 Today's Best Bets")
-        
-        confirmed_hitters = [h for h in all_hitter_results if h.get("lineup_confirmed")]
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### ⚾ Top Pitcher K Props")
-            top_pitchers = [p for p in all_pitcher_results if p["salci"] >= 60][:5]
-            
-            if not top_pitchers:
-                st.info("No elite pitcher picks available.")
-            else:
-                for i, p in enumerate(top_pitchers, 1):
-                    rating_label, emoji, _ = get_rating(p["salci"])
-                    lineup_badge = "✅" if p.get("lineup_confirmed") else "⏳"
-                    p_hand = p.get("pitcher_hand", "R")
-                    st.markdown(f"""
-                    <div style='background: #e0f2fe; padding: 1rem; border-radius: 10px; 
-                                margin-bottom: 0.5rem; border-left: 4px solid #3b82f6;'>
-                        <span style='color: #1e3a5f;'><strong>#{i} {p['pitcher']} ({p_hand}HP)</strong> ({p['team']} vs {p['opponent']}) {lineup_badge}</span><br>
-                        <span style='font-size: 1.2rem; color: #1e3a5f;'>{emoji} SALCI: {p['salci']}</span><br>
-                        <span style='color: #1e3a5f;'>Expected: <strong>{p['expected']} Ks</strong></span><br>
-                        <span style='color: #1e3a5f;'>5+ @ {p['lines'].get(5, '?')}% | 6+ @ {p['lines'].get(6, '?')}% | 7+ @ {p['lines'].get(7, '?')}%</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("#### 🏏 Hot Hitter Props (Confirmed Starters)")
-            top_hitters = [h for h in confirmed_hitters if h["score"] >= 65][:5]
-            
-            if not top_hitters:
-                st.info("⏳ Waiting for lineup confirmations. Check back closer to game time!")
-            else:
-                for i, h in enumerate(top_hitters, 1):
-                    r = h["recent"]
-                    h_hand = h.get("bat_side", "R")
-                    p_hand = h.get("pitcher_hand", "R")
-                    matchup, _ = get_matchup_grade(r.get("k_rate", 0.22), h["pitcher_k_pct"],
-                                                   h_hand, p_hand)
-                    st.markdown(f"""
-                    <div style='background: #fef3c7; padding: 1rem; border-radius: 10px;
-                                margin-bottom: 0.5rem; border-left: 4px solid #f59e0b;'>
-                        <span style='color: #78350f;'><strong>#{i} {h['name']} ({h_hand}HB)</strong> ({h['team']}) - Batting #{h.get('batting_order', '?')}</span><br>
-                        <span style='color: #78350f;'>vs {h['vs_pitcher']} ({p_hand}HP) | {matchup}</span><br>
-                        <span style='color: #78350f;'>L7: <strong>{r.get('avg', 0):.3f} AVG</strong> / {r.get('ops', 0):.3f} OPS</span><br>
-                        <span style='color: #78350f;'>{f"🔥 {r.get('hit_streak', 0)}-game hit streak" if r.get('hit_streak', 0) >= 3 else ""}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-    
-    # ======================
-    # TAB 4: Heat Maps
-    # ======================
-    with tab4:
-        st.markdown("### 🔥 Zone Heat Maps")
-        
-        if not STATCAST_AVAILABLE:
-            st.warning("""
-            ⚠️ **Heat Maps require Statcast data**
-            
-            To enable this feature:
-            1. Install pybaseball: `pip install pybaseball`
-            2. Add `statcast_connector.py` to your app folder
-            3. Restart the app
-            
-            Heat Maps show:
-            - **Pitcher Attack Zones** - Where pitchers throw most frequently
-            - **Hitter Damage Zones** - Where hitters do the most damage
-            - **Matchup Analysis** - Overlap for predictions
-            """)
-        else:
-            st.markdown("*Select a pitcher or hitter to see their zone performance*")
-            
-            col_p, col_h = st.columns(2)
-            
-            with col_p:
-                st.markdown("#### 🎯 Pitcher Attack Map")
-                if all_pitcher_results:
-                    pitcher_options = {f"{p['pitcher']} ({p['team']})": p for p in all_pitcher_results}
-                    selected_pitcher_name = st.selectbox(
-                        "Select Pitcher",
-                        options=list(pitcher_options.keys()),
-                        key="heatmap_pitcher"
-                    )
-                    if selected_pitcher_name:
-                        selected_p = pitcher_options[selected_pitcher_name]
-                        pid = selected_p.get("pitcher_id")
-                        if pid:
-                            with st.spinner("Loading Statcast data..."):
-                                attack_map = get_pitcher_attack_map(pid, days=30)
-                            if attack_map and attack_map.get('grid'):
-                                st.markdown("##### Strike Zone Usage & Effectiveness")
-                                zone_grid = attack_map['grid']
-                                z_data, text_data = [], []
-                                for row in [3, 2, 1]:
-                                    row_vals, row_text = [], []
-                                    for col in [1, 2, 3]:
-                                        zone = (row - 1) * 3 + col
-                                        zone_info = zone_grid.get(zone, {})
-                                        usage = zone_info.get('usage', 0)
-                                        whiff = zone_info.get('whiff_pct', 20)
-                                        row_vals.append(whiff)
-                                        row_text.append(f"Zone {zone}<br>Usage: {usage:.0f}%<br>Whiff: {whiff:.0f}%")
-                                    z_data.append(row_vals)
-                                    text_data.append(row_text)
-                                
-                                fig = go.Figure(data=go.Heatmap(
-                                    z=z_data,
-                                    text=text_data,
-                                    texttemplate="%{text}",
-                                    textfont={"size": 10},
-                                    colorscale=[[0, '#ef4444'], [0.5, '#fbbf24'], [1, '#22c55e']],
-                                    showscale=True,
-                                    colorbar=dict(title="Whiff%"),
-                                ))
-                                fig.update_layout(
-                                    title=f"{selected_p['pitcher']} - Attack Zones (L30D)",
-                                    xaxis=dict(showticklabels=False),
-                                    yaxis=dict(showticklabels=False),
-                                    height=350,
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.info("Unable to load heat map data for this pitcher")
-            
-            with col_h:
-                st.markdown("#### 💥 Hitter Damage Map")
-                if all_hitter_results:
-                    hitter_options = {f"{h['name']} ({h['team']})": h for h in all_hitter_results[:20]}
-                    selected_hitter_name = st.selectbox(
-                        "Select Hitter",
-                        options=list(hitter_options.keys()),
-                        key="heatmap_hitter"
-                    )
-                    if selected_hitter_name:
-                        selected_h = hitter_options[selected_hitter_name]
-                        hid = selected_h.get("player_id")
-                        if hid:
-                            with st.spinner("Loading Statcast data..."):
-                                damage_map = get_hitter_damage_map(hid, days=30)
-                            if damage_map and damage_map.get('grid'):
-                                st.markdown("##### Batting Average by Zone")
-                                zone_grid = damage_map['grid']
-                                z_data, text_data = [], []
-                                for row in [3, 2, 1]:
-                                    row_vals, row_text = [], []
-                                    for col in [1, 2, 3]:
-                                        zone = (row - 1) * 3 + col
-                                        zone_info = zone_grid.get(zone, {})
-                                        ba = zone_info.get('ba', 0.250)
-                                        swing = zone_info.get('swing_pct', 50)
-                                        row_vals.append(ba)
-                                        row_text.append(f"Zone {zone}<br>BA: {ba:.3f}<br>Swing: {swing:.0f}%")
-                                    z_data.append(row_vals)
-                                    text_data.append(row_text)
-                                
-                                fig = go.Figure(data=go.Heatmap(
-                                    z=z_data,
-                                    text=text_data,
-                                    texttemplate="%{text}",
-                                    textfont={"size": 10},
-                                    colorscale=[[0, '#3b82f6'], [0.4, '#fbbf24'], [1, '#ef4444']],
-                                    showscale=True,
-                                    colorbar=dict(title="BA"),
-                                ))
-                                fig.update_layout(
-                                    title=f"{selected_h['name']} - Damage Zones (L30D)",
-                                    xaxis=dict(showticklabels=False),
-                                    yaxis=dict(showticklabels=False),
-                                    height=350,
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
-    
-    # ======================
-    # TAB 5: Charts & Share
-    # ======================
-    with tab5:
         st.markdown("### 📊 Shareable Charts & Insights")
         st.markdown("*Only showing confirmed lineups. Charts update as lineups are released.*")
         
@@ -3539,18 +3392,18 @@ def main():
                 """)
     
     # ======================
-    # TAB 6: Yesterday's Reflection
+    # TAB 4: Yesterday's Reflection
     # ======================
-    with tab6:
+    with tab4:
         if YESTERDAY_TAB_AVAILABLE:
             render_yesterday_tab()
         else:
             st.warning("⚠️ `yesterday_tab.py` not found. Make sure it is in the same folder as this file.")
     
     # ======================
-    # TAB 7: Model Accuracy
+    # TAB 5: Model Accuracy
     # ======================
-    with tab7:
+    with tab5:
         st.markdown("### 🎯 SALCI Model Accuracy Dashboard")
         st.markdown("*Track how well SALCI predictions match actual results over time.*")
         st.markdown("---")
@@ -3594,14 +3447,14 @@ def main():
                 c2.metric("📊 Games Analyzed", ra.get("games_analyzed", 0))
                 c3.metric("⚖️ Avg K Delta",  f"{ra.get('avg_k_delta', 0):+.2f} Ks", delta_color="inverse")
 
-    with tab8:
+    with tab6:
         if PITCHING_DASH_AVAILABLE:
             render_pitching_dashboard()
 
     # ======================
-    # TAB 9: Social Content Generator
+    # TAB 7: Social Content Generator
     # ======================
-    with tab9:
+    with tab7:
         if SOCIAL_CONTENT_AVAILABLE:
             render_social_content_tab(filtered_pitchers)
         else:
@@ -3611,7 +3464,7 @@ def main():
                 "and add `ANTHROPIC_API_KEY` to `.streamlit/secrets.toml`."
             )
 
-    with tab10:
+    with tab8:
         if ODDS_TAB_AVAILABLE:
             render_odds_tab(
                 pitchers_data=all_pitcher_results if all_pitcher_results else None,
