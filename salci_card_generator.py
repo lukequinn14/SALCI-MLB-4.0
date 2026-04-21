@@ -77,7 +77,28 @@ PAD       = 24
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _font(size: int = 16) -> ImageFont.FreeTypeFont:
-    """Return a scaled PIL default font. Pillow 10+ supports the size param."""
+    """
+    Return a TrueType font at the requested size.
+    Tries common system font paths (Streamlit Cloud = Ubuntu/DejaVu,
+    macOS = Helvetica/Arial) before falling back to PIL's bundled default.
+    """
+    _FONT_PATHS = [
+        # Ubuntu / Streamlit Cloud
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        # macOS
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/SFNSText.ttf",
+        "/System/Library/Fonts/SFNSDisplay.ttf",
+    ]
+    for path in _FONT_PATHS:
+        try:
+            return ImageFont.truetype(path, size)
+        except (IOError, OSError):
+            continue
+    # Final fallback — PIL bundled bitmap font (Pillow 10+ accepts size)
     try:
         return ImageFont.load_default(size=size)
     except TypeError:
@@ -109,16 +130,40 @@ _PLACEHOLDER_COLORS = {
     "T": (0, 56, 120),  "W": (171, 0, 3),
 }
 
+# team_id → 3-letter abbreviation for placeholder labels
+_TEAM_ID_ABBREV = {
+    108: "LAA", 109: "ARI", 110: "BAL", 111: "BOS", 112: "CHC",
+    113: "CIN", 114: "CLE", 115: "COL", 116: "DET", 117: "HOU",
+    118: "KC",  119: "LAD", 120: "WSH", 121: "NYM", 133: "OAK",
+    134: "PIT", 135: "SD",  136: "SEA", 137: "SF",  138: "STL",
+    139: "TB",  140: "TEX", 141: "TOR", 142: "MIN", 143: "PHI",
+    144: "ATL", 145: "CWS", 146: "MIA", 147: "NYY", 158: "MIL",
+}
+
+
+def _abbrev_from_name(name: str) -> str:
+    """
+    Derive a 3-char display label from a full team name.
+    Strips non-alpha characters then takes the first 3 letters.
+    'St. Louis Cardinals' → 'STL', 'New York Yankees' → 'NEW'.
+    """
+    import re
+    clean = re.sub(r"[^a-zA-Z]", "", name)
+    return clean[:3].upper() if clean else "???"
+
+
 def _placeholder_logo(team_abbrev: str, size: tuple, bg: tuple) -> Image.Image:
-    """Colored circle with the first two letters of the team abbreviation."""
+    """Colored circle with a 3-letter team label."""
     img  = Image.new("RGBA", size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     w, h = size
-    first = (team_abbrev or "?")[0].upper()
+    # Clean label: if it looks like a full team name, derive a short label
+    raw = (team_abbrev or "?").strip()
+    label = raw[:3].upper() if len(raw) <= 4 else _abbrev_from_name(raw)
+    first = label[0] if label else "?"
     color = _PLACEHOLDER_COLORS.get(first, (60, 80, 140))
     draw.ellipse([2, 2, w - 3, h - 3], fill=color + (255,))
-    label = (team_abbrev or "?")[:3].upper()
-    font  = _font(max(9, w // 4))
+    font   = _font(max(9, w // 4))
     tw, th = _text_size(draw, label, font)
     draw.text(((w - tw) // 2, (h - th) // 2), label,
               fill=(255, 255, 255, 255), font=font)
@@ -159,7 +204,12 @@ def get_team_logo(team_id: int, variant: str, size: tuple,
     except Exception:
         pass
 
-    img = _placeholder_logo(team_abbrev, size, (30, 60, 120))
+    # Resolve a clean abbreviation for the placeholder label
+    clean_abbrev = (
+        _TEAM_ID_ABBREV.get(team_id)
+        or (_abbrev_from_name(team_abbrev) if len(team_abbrev) > 4 else team_abbrev.upper())
+    )
+    img = _placeholder_logo(clean_abbrev, size, (30, 60, 120))
     _LOGO_CACHE[cache_key] = img
     return img
 
@@ -389,36 +439,64 @@ def generate_card(pitchers: list, theme: dict,
     early, late = split_by_gametime(pitchers)
     has_groups  = bool(early or late)
 
-    # Calculate total height
+    # Calculate total height (at 1× — we'll scale up internally)
     n_sections  = sum([bool(early), bool(late)]) if has_groups else 0
     n_pitchers  = len(early) + len(late) if has_groups else len(pitchers)
     total_h     = (HEADER_H + n_sections * SECTION_H +
                    n_pitchers * ROW_H + FOOTER_H + 10)
 
-    img  = Image.new("RGB", (CARD_WIDTH, total_h), theme["bg"])
-    draw = ImageDraw.Draw(img)
+    # ── 2× supersampling: render at double size, downsample with LANCZOS ──
+    # Save 1× final dimensions BEFORE touching any constants.
+    final_w  = CARD_WIDTH
+    final_h  = total_h
+    SCALE    = 2
+    render_w = final_w * SCALE
+    render_h = final_h * SCALE
 
-    draw_header(draw, img, theme, date_str, card_type)
-    y = HEADER_H + 10
+    # Temporarily patch module-level layout constants for the hi-res pass.
+    import salci_card_generator as _self
+    _orig = {k: getattr(_self, k) for k in
+             ("CARD_WIDTH", "HEADER_H", "ROW_H", "SECTION_H", "FOOTER_H", "PAD")}
+    _self.CARD_WIDTH = render_w
+    _self.HEADER_H   = HEADER_H  * SCALE
+    _self.ROW_H      = ROW_H     * SCALE
+    _self.SECTION_H  = SECTION_H * SCALE
+    _self.FOOTER_H   = FOOTER_H  * SCALE
+    _self.PAD        = PAD       * SCALE
 
-    def _render_group(group: list, label: str) -> None:
-        nonlocal y
-        if not group:
-            return
-        y += draw_section_header(draw, theme, label, y, CARD_WIDTH)
-        for idx, pitcher in enumerate(group):
-            draw_pitcher_row(draw, img, theme, pitcher, y, CARD_WIDTH, idx)
-            y += ROW_H
+    try:
+        img  = Image.new("RGB", (render_w, render_h), theme["bg"])
+        draw = ImageDraw.Draw(img)
 
-    if has_groups:
-        _render_group(early, "EARLY GAMES")
-        _render_group(late,  "LATE GAMES")
-    else:
-        for idx, pitcher in enumerate(pitchers):
-            draw_pitcher_row(draw, img, theme, pitcher, y, CARD_WIDTH, idx)
-            y += ROW_H
+        draw_header(draw, img, theme, date_str, card_type)
+        y = _self.HEADER_H + 10 * SCALE
 
-    draw_footer(draw, theme, CARD_WIDTH, total_h)
+        def _render_group(group: list, label: str) -> None:
+            nonlocal y
+            if not group:
+                return
+            y += draw_section_header(draw, theme, label, y, render_w)
+            for idx, pitcher in enumerate(group):
+                draw_pitcher_row(draw, img, theme, pitcher, y, render_w, idx)
+                y += _self.ROW_H
+
+        if has_groups:
+            _render_group(early, "EARLY GAMES")
+            _render_group(late,  "LATE GAMES")
+        else:
+            for idx, pitcher in enumerate(pitchers):
+                draw_pitcher_row(draw, img, theme, pitcher, y, render_w, idx)
+                y += _self.ROW_H
+
+        draw_footer(draw, theme, render_w, render_h)
+
+        # Downsample to final 1× size — LANCZOS gives crisp antialiased edges.
+        img = img.resize((final_w, final_h), Image.LANCZOS)
+    finally:
+        # Always restore original constants even if an exception occurs.
+        for k, v in _orig.items():
+            setattr(_self, k, v)
+
     return img
 
 
