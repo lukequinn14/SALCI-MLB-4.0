@@ -18,19 +18,19 @@
       "opp_side": "home",
       "game_pk": 824199,
       "game_datetime": "2026-05-12T00:10:00Z",
-      "salci": 61.2,
+      "salci": 61.6,
       "salci_grade": "B+",
       "expected": 8.6,
       "k_lines": {
         "8": 62,
-        "9": 48,
-        "10": 35,
+        "9": 49,
+        "10": 36,
         "11": 24
       },
       "lines": {
         "8": 62,
-        "9": 48,
-        "10": 35,
+        "9": 49,
+        "10": 36,
         "11": 24
       },
       "floor": 8,
@@ -38,7 +38,7 @@
       "volatility": 1.15,
       "stuff_score": 113.0,
       "location_score": 111.0,
-      "matchup_score": 29.6,
+      "matchup_score": 30.9,
       "workload_score": 52.4,
       "stuff_breakdown": {},
       "profile_type": "BALANCED-PLUS",
@@ -69,27 +69,27 @@
       "opp_side": "away",
       "game_pk": 824441,
       "game_datetime": "2026-05-11T22:10:00Z",
-      "salci": 59.0,
-      "salci_grade": "B",
-      "expected": 6.4,
+      "salci": 63.0,
+      "salci_grade": "B+",
+      "expected": 6.8,
       "k_lines": {
-        "6": 61,
-        "7": 45,
-        "8": 31,
-        "9": 19
+        "6": 67,
+        "7": 52,
+        "8": 37,
+        "9": 24
       },
       "lines": {
-        "6": 61,
-        "7": 45,
-        "8": 31,
-        "9": 19
+        "6": 67,
+        "7": 52,
+        "8": 37,
+        "9": 24
       },
       "floor": 6,
-      "floor_confidence": 61,
+      "floor_confidence": 67,
       "volatility": 1.15,
       "stuff_score": 104.0,
       "location_score": 104.0,
-      "matchup_score": 55.8,
+      "matchup_score": 69.1,
       "workload_score": 41.6,
       "stuff_breakdown": {},
       "profile_type": "BALANCED",
@@ -158,7 +158,7 @@
       }
     }
   ],
-  "updated_at": "2026-05-10T23:53:49.434889",
+  "updated_at": "2026-05-11T01:53:59.078424",
   "confirmed_count": 0,
   "salci_updated": 3
 }
